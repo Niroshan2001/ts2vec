@@ -131,7 +131,7 @@ def _get_time_features(dt):
         dt.dayofyear.to_numpy(),
         dt.month.to_numpy(),
         dt.isocalendar().week.to_numpy(),
-    ], axis=1).astype(np.float)
+    ], axis=1).astype(np.float64)
 
 
 def load_forecast_csv(name, univar=False):
