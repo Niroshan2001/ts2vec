@@ -63,8 +63,13 @@ def eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, 
             test_pred_inv = scaler.inverse_transform(test_pred.swapaxes(0, 3)).swapaxes(0, 3)
             test_labels_inv = scaler.inverse_transform(test_labels.swapaxes(0, 3)).swapaxes(0, 3)
         else:
-            test_pred_inv = scaler.inverse_transform(test_pred)
-            test_labels_inv = scaler.inverse_transform(test_labels)
+            # Reshape to 2D for scaler, then reshape back
+            original_shape = test_pred.shape
+            test_pred_2d = test_pred.reshape(-1, test_pred.shape[-1])
+            test_labels_2d = test_labels.reshape(-1, test_labels.shape[-1])
+            
+            test_pred_inv = scaler.inverse_transform(test_pred_2d).reshape(original_shape)
+            test_labels_inv = scaler.inverse_transform(test_labels_2d).reshape(original_shape)
             
         out_log[pred_len] = {
             'norm': test_pred,
