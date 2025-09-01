@@ -130,7 +130,7 @@ def _get_time_features(dt):
         dt.day.to_numpy(),
         dt.dayofyear.to_numpy(),
         dt.month.to_numpy(),
-        dt.weekofyear.to_numpy(),
+        dt.isocalendar().week.to_numpy(),
     ], axis=1).astype(np.float)
 
 
