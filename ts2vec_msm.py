@@ -215,6 +215,10 @@ class TS2VecMSM:
                 total_loss.backward()
                 optimizer.step()
                 
+                # Clear unused memory
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                
                 cum_loss += total_loss.item()
                 cum_contrastive_loss += contrastive_loss.item()
                 cum_msm_loss += msm_loss.item()
@@ -265,7 +269,7 @@ class TS2VecMSM:
         assert data.ndim == 3
         
         if batch_size is None:
-            batch_size = self.batch_size
+            batch_size = min(self.batch_size, 4)  # Reduce batch size for evaluation to save memory
         
         n_samples, ts_l, _ = data.shape
         
@@ -279,6 +283,11 @@ class TS2VecMSM:
             output = []
             for batch in loader:
                 x = batch[0]
+                
+                # Clear CUDA cache between batches to prevent OOM
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                
                 if sliding_length is not None:
                     reprs = []
                     if n_samples < batch_size:
@@ -290,22 +299,34 @@ class TS2VecMSM:
                     
                     if sliding_padding > 0:
                         x = F.pad(x, (0, 0, sliding_padding, sliding_padding), mode='constant', value=np.nan)
+                    
+                    # Process sliding windows in smaller chunks
+                    chunk_size = min(10, x.size(1) - sliding_length + 1)  # Process 10 windows at a time
+                    for start_i in range(0, x.size(1) - sliding_length + 1, chunk_size):
+                        end_i = min(start_i + chunk_size, x.size(1) - sliding_length + 1)
+                        chunk_reprs = []
                         
-                    for i in range(x.size(1) - sliding_length + 1):
-                        out = self._net(x[:, i : i + sliding_length].to(self.device), mask)
-                        if encoding_window == 'full_series':
-                            out = F.max_pool1d(
-                                out.transpose(1, 2), 
-                                kernel_size = out.size(1),
-                            ).transpose(1, 2)
-                        elif isinstance(encoding_window, int):
-                            out = F.max_pool1d(
-                                out.transpose(1, 2), 
-                                kernel_size = encoding_window, 
-                                stride = 1,
-                                padding = encoding_window // 2
-                            ).transpose(1, 2)
-                        reprs.append(out[:n_samples])
+                        for i in range(start_i, end_i):
+                            out = self._net(x[:, i : i + sliding_length].to(self.device), mask)
+                            if encoding_window == 'full_series':
+                                out = F.max_pool1d(
+                                    out.transpose(1, 2), 
+                                    kernel_size = out.size(1),
+                                ).transpose(1, 2)
+                            elif isinstance(encoding_window, int):
+                                out = F.max_pool1d(
+                                    out.transpose(1, 2), 
+                                    kernel_size = encoding_window, 
+                                    stride = 1,
+                                    padding = encoding_window // 2
+                                ).transpose(1, 2)
+                            chunk_reprs.append(out[:n_samples].cpu())  # Move to CPU immediately
+                        
+                        reprs.extend(chunk_reprs)
+                        
+                        # Clear cache after each chunk
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
                     
                     out = torch.stack(reprs, dim=1)
                 else:
@@ -323,12 +344,16 @@ class TS2VecMSM:
                             padding = encoding_window // 2
                         ).transpose(1, 2)
                         
-                output.append(out)
+                output.append(out.cpu())  # Move to CPU immediately
+                
+                # Clear CUDA cache after each batch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
                 
         output = torch.cat(output, dim=0)
         
         self.train(org_training)
-        return output.cpu().numpy()
+        return output.numpy()
     
     def save(self, fn):
         ''' Save the model to a file.
