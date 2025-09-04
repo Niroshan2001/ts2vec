@@ -83,39 +83,77 @@ def np_shift(arr, num, fill_value=np.nan):
 def eval_anomaly_detection(model, all_train_data, all_train_labels, all_train_timestamps, all_test_data, all_test_labels, all_test_timestamps, delay):
     t = time.time()
     
+    print("🔍 Starting anomaly detection evaluation...")
+    print(f"📊 Total datasets to process: {len(all_train_data)}")
+    
     all_train_repr = {}
     all_test_repr = {}
     all_train_repr_wom = {}
     all_test_repr_wom = {}
-    for k in all_train_data:
+    
+    # Process each dataset with progress logging
+    for i, k in enumerate(all_train_data):
+        print(f"\n📈 Processing dataset {i+1}/{len(all_train_data)}: {k}")
         train_data = all_train_data[k]
         test_data = all_test_data[k]
-
-        full_repr = model.encode(
-            np.concatenate([train_data, test_data]).reshape(1, -1, 1),
-            mask='mask_last',
-            causal=True,
-            sliding_length=1,
-            sliding_padding=200,
-            batch_size=256
-        ).squeeze()
-        all_train_repr[k] = full_repr[:len(train_data)]
-        all_test_repr[k] = full_repr[len(train_data):]
-
-        full_repr_wom = model.encode(
-            np.concatenate([train_data, test_data]).reshape(1, -1, 1),
-            causal=True,
-            sliding_length=1,
-            sliding_padding=200,
-            batch_size=256
-        ).squeeze()
-        all_train_repr_wom[k] = full_repr_wom[:len(train_data)]
-        all_test_repr_wom[k] = full_repr_wom[len(train_data):]
         
+        print(f"   📏 Train data shape: {train_data.shape}")
+        print(f"   📏 Test data shape: {test_data.shape}")
+        print(f"   🔄 Encoding with mask='mask_last'...")
+        
+        # Clear CUDA cache before encoding
+        if hasattr(model, 'device') and 'cuda' in str(model.device):
+            import torch
+            torch.cuda.empty_cache()
+
+        try:
+            full_repr = model.encode(
+                np.concatenate([train_data, test_data]).reshape(1, -1, 1),
+                mask='mask_last',
+                causal=True,
+                sliding_length=1,
+                sliding_padding=200,
+                batch_size=128  # Reduced from 256 to prevent OOM
+            ).squeeze()
+            print(f"   ✅ Masked encoding completed. Shape: {full_repr.shape}")
+            all_train_repr[k] = full_repr[:len(train_data)]
+            all_test_repr[k] = full_repr[len(train_data):]
+        except Exception as e:
+            print(f"   ❌ Error in masked encoding: {e}")
+            raise e
+
+        print(f"   🔄 Encoding without mask...")
+        
+        # Clear CUDA cache before second encoding
+        if hasattr(model, 'device') and 'cuda' in str(model.device):
+            import torch
+            torch.cuda.empty_cache()
+            
+        try:
+            full_repr_wom = model.encode(
+                np.concatenate([train_data, test_data]).reshape(1, -1, 1),
+                causal=True,
+                sliding_length=1,
+                sliding_padding=200,
+                batch_size=128  # Reduced from 256 to prevent OOM
+            ).squeeze()
+            print(f"   ✅ Non-masked encoding completed. Shape: {full_repr_wom.shape}")
+            all_train_repr_wom[k] = full_repr_wom[:len(train_data)]
+            all_test_repr_wom[k] = full_repr_wom[len(train_data):]
+        except Exception as e:
+            print(f"   ❌ Error in non-masked encoding: {e}")
+            raise e
+        
+        print(f"   ⏱️  Dataset {k} completed in {time.time() - t:.2f}s")
+        
+    print(f"\n🎯 All encoding completed! Starting anomaly scoring...")
+    
     res_log = []
     labels_log = []
     timestamps_log = []
-    for k in all_train_data:
+    
+    for i, k in enumerate(all_train_data):
+        print(f"\n🔍 Anomaly scoring for dataset {i+1}/{len(all_train_data)}: {k}")
         train_data = all_train_data[k]
         train_labels = all_train_labels[k]
         train_timestamps = all_train_timestamps[k]
@@ -124,28 +162,46 @@ def eval_anomaly_detection(model, all_train_data, all_train_labels, all_train_ti
         test_labels = all_test_labels[k]
         test_timestamps = all_test_timestamps[k]
 
+        print(f"   📊 Computing representation differences...")
         train_err = np.abs(all_train_repr_wom[k] - all_train_repr[k]).sum(axis=1)
         test_err = np.abs(all_test_repr_wom[k] - all_test_repr[k]).sum(axis=1)
+        print(f"   📊 Train error range: [{train_err.min():.4f}, {train_err.max():.4f}]")
+        print(f"   📊 Test error range: [{test_err.min():.4f}, {test_err.max():.4f}]")
 
+        print(f"   📈 Applying moving average smoothing...")
         ma = np_shift(bn.move_mean(np.concatenate([train_err, test_err]), 21), 1)
         train_err_adj = (train_err - ma[:len(train_err)]) / ma[:len(train_err)]
         test_err_adj = (test_err - ma[len(train_err):]) / ma[len(train_err):]
         train_err_adj = train_err_adj[22:]
 
+        print(f"   🎯 Computing threshold...")
         thr = np.mean(train_err_adj) + 4 * np.std(train_err_adj)
+        print(f"   🎯 Threshold: {thr:.4f}")
+        
         test_res = (test_err_adj > thr) * 1
+        anomaly_count = test_res.sum()
+        print(f"   🚨 Raw anomalies detected: {anomaly_count}/{len(test_res)} ({100*anomaly_count/len(test_res):.1f}%)")
 
+        print(f"   🔄 Applying delay adjustment (delay={delay})...")
         for i in range(len(test_res)):
             if i >= delay and test_res[i-delay:i].sum() >= 1:
                 test_res[i] = 0
 
+        final_anomaly_count = test_res.sum()
+        print(f"   ✅ Final anomalies: {final_anomaly_count}/{len(test_res)} ({100*final_anomaly_count/len(test_res):.1f}%)")
+
         res_log.append(test_res)
         labels_log.append(test_labels)
         timestamps_log.append(test_timestamps)
+        
+    print(f"\n🏁 All anomaly scoring completed!")
     t = time.time() - t
+    print(f"⏱️ Total evaluation time: {t:.2f}s")
     
+    print(f"📝 Computing final evaluation metrics...")
     eval_res = eval_ad_result(res_log, labels_log, timestamps_log, delay)
     eval_res['infer_time'] = t
+    print(f"✅ Evaluation completed!")
     return res_log, eval_res
 
 
