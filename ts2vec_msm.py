@@ -85,6 +85,7 @@ class TS2VecMSM:
         
         self.n_epochs = 0
         self.n_iters = 0
+        self.training = True  # Add training flag
         
     def _get_dynamic_lambda(self, epoch, total_epochs):
         """
