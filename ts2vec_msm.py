@@ -178,18 +178,34 @@ class TS2VecMSM:
                 
                 optimizer.zero_grad()
                 
-                # Forward pass through encoder
-                out = self._net(x)
+                # Create two different views for contrastive learning (same as TS2Vec)
+                ts_l = x.size(1)
+                crop_l = np.random.randint(low=2 ** (self.temporal_unit + 1), high=ts_l+1)
+                crop_left = np.random.randint(ts_l - crop_l + 1)
+                crop_right = crop_left + crop_l
+                crop_eleft = np.random.randint(crop_left + 1)
+                crop_eright = np.random.randint(low=crop_right, high=ts_l + 1)
+                crop_offset = np.random.randint(low=-crop_eleft, high=ts_l - crop_eright + 1, size=x.size(0))
+                
+                # Forward pass through encoder for contrastive learning
+                out1 = self._net(take_per_row(x, crop_offset + crop_eleft, crop_right - crop_eleft))
+                out1 = out1[:, -crop_l:]
+                
+                out2 = self._net(take_per_row(x, crop_offset + crop_left, crop_eright - crop_left))
+                out2 = out2[:, :crop_l]
                 
                 # Contrastive loss (discriminative objective)
                 contrastive_loss = hierarchical_contrastive_loss(
-                    out,
+                    out1,
+                    out2,
                     temporal_unit=self.temporal_unit
                 )
                 
                 # MSM loss (generative objective)
+                # Use full sequence for MSM
                 msm_mask = self._generate_msm_mask(x.size(0), x.size(1))
-                reconstructed = self._msm_decoder(out, msm_mask)
+                full_out = self._net(x)
+                reconstructed = self._msm_decoder(full_out, msm_mask)
                 msm_loss = self._msm_loss(reconstructed, x, msm_mask)
                 
                 # Combined loss
