@@ -147,6 +147,9 @@ if __name__ == '__main__':
     training_time = time.time() - t
     print(f"Training time: {datetime.timedelta(seconds=training_time)}")
     
+    # Set model to evaluation mode
+    model.eval()
+    
     # Create output directory
     run_dir = 'training/' + args.dataset + '__' + args.run_name + '_' + str(datetime.datetime.now()).replace(' ', '_').replace(':', '_').replace('.', '_')
     os.makedirs(run_dir, exist_ok=True)
