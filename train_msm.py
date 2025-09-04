@@ -90,8 +90,13 @@ if __name__ == '__main__':
         input_dims = data.shape[-1]
         training_data = data
     else:  # anomaly detection
-        input_dims = all_train_data[0].shape[-1]
-        training_data = np.concatenate(all_train_data, axis=0)
+        # all_train_data is a dictionary, get first key's data to determine dimensions
+        first_key = list(all_train_data.keys())[0]
+        input_dims = 1  # Anomaly data is typically univariate
+        
+        # Generate training data using the same method as original TS2Vec
+        from datautils import gen_ano_train_data
+        training_data = gen_ano_train_data(all_train_data)
     
     # Create TS2Vec-MSM model
     model = TS2VecMSM(
@@ -123,10 +128,11 @@ if __name__ == '__main__':
             print(f"Added {missing_ratio*100}% irregular missing values")
         else:  # anomaly detection
             missing_ratio = args.irregular
-            for i, train_data_i in enumerate(all_train_data):
+            for key in all_train_data:
+                train_data_i = all_train_data[key]
                 n_missing = int(train_data_i.size * missing_ratio)
                 indices = np.random.choice(train_data_i.size, n_missing, replace=False)
-                all_train_data[i].flat[indices] = np.nan
+                train_data_i.flat[indices] = np.nan
             print(f"Added {missing_ratio*100}% irregular missing values to anomaly data")
     
     # Training

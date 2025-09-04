@@ -71,7 +71,8 @@ class TS2VecMSM:
         
         # MSM decoder (generative)
         self._msm_decoder = MSMDecoder(
-            input_dims=output_dims,  # Takes encoder output
+            encoder_dims=output_dims,    # Takes encoder output (e.g., 320)
+            target_dims=input_dims,      # Reconstructs original signal (e.g., 1)
             hidden_dims=hidden_dims,
             depth=msm_decoder_depth
         ).to(self.device)

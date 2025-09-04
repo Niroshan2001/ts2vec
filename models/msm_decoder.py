@@ -8,19 +8,20 @@ class MSMDecoder(nn.Module):
     Following the MAE design philosophy - lightweight decoder for efficiency.
     """
     
-    def __init__(self, input_dims, hidden_dims=64, depth=3):
+    def __init__(self, encoder_dims, target_dims, hidden_dims=64, depth=3):
         super().__init__()
-        self.input_dims = input_dims
+        self.encoder_dims = encoder_dims  # Input from encoder (e.g., 320)
+        self.target_dims = target_dims    # Output target dims (e.g., 1 for univariate)
         self.hidden_dims = hidden_dims
         
         # Lightweight decoder layers
         self.decoder_layers = nn.ModuleList([
-            nn.Linear(input_dims if i == 0 else hidden_dims, hidden_dims)
+            nn.Linear(encoder_dims if i == 0 else hidden_dims, hidden_dims)
             for i in range(depth)
         ])
         
         # Final reconstruction layer
-        self.reconstruction_head = nn.Linear(hidden_dims, input_dims)
+        self.reconstruction_head = nn.Linear(hidden_dims, target_dims)
         
         # Dropout for regularization
         self.dropout = nn.Dropout(p=0.1)
@@ -28,11 +29,11 @@ class MSMDecoder(nn.Module):
     def forward(self, encoded_repr, mask):
         """
         Args:
-            encoded_repr: Encoded representations (B x T x output_dims)
+            encoded_repr: Encoded representations (B x T x encoder_dims)
             mask: Boolean mask indicating which positions were masked (B x T)
         
         Returns:
-            reconstructed: Reconstructed values for masked positions (B x T x input_dims)
+            reconstructed: Reconstructed values for masked positions (B x T x target_dims)
         """
         x = encoded_repr
         
