@@ -1,0 +1,353 @@
+import torch
+import torch.nn.functional as F
+from torch.utils.data import TensorDataset, DataLoader
+import numpy as np
+from models import TSEncoder
+from models.losses import hierarchical_contrastive_loss
+from models.msm_decoder import MSMDecoder, MSMLoss
+from utils import take_per_row, split_with_nan, centerize_vary_length_series, torch_pad_nan
+import math
+
+class TS2VecMSM:
+    '''The TS2Vec-MSM hybrid model with contrastive learning and masked signal modeling'''
+    
+    def __init__(
+        self,
+        input_dims,
+        output_dims=320,
+        hidden_dims=64,
+        depth=10,
+        device='cuda',
+        lr=0.001,
+        batch_size=16,
+        max_train_length=None,
+        temporal_unit=0,
+        after_iter_callback=None,
+        after_epoch_callback=None,
+        # New MSM parameters
+        msm_weight=0.5,  # λ parameter for balancing losses
+        msm_mask_rate=0.15,  # Percentage of tokens to mask
+        msm_decoder_depth=3,
+        dynamic_lambda=False  # Whether to use dynamic λ scheduling
+    ):
+        ''' Initialize a TS2Vec-MSM model.
+        
+        Args:
+            input_dims (int): The input dimension. For a univariate time series, this should be set to 1.
+            output_dims (int): The representation dimension.
+            hidden_dims (int): The hidden dimension of the encoder.
+            depth (int): The number of hidden residual blocks in the encoder.
+            device (int): The gpu used for training and inference.
+            lr (int): The learning rate.
+            batch_size (int): The batch size.
+            max_train_length (Union[int, NoneType]): The maximum allowed sequence length for training.
+            temporal_unit (int): The minimum unit to perform temporal contrast.
+            after_iter_callback (Union[Callable, NoneType]): A callback function after each iteration.
+            after_epoch_callback (Union[Callable, NoneType]): A callback function after each epoch.
+            msm_weight (float): Weight for MSM loss (λ parameter, 0=contrastive only, 1=MSM only).
+            msm_mask_rate (float): Percentage of timestamps to mask for MSM.
+            msm_decoder_depth (int): Number of layers in the MSM decoder.
+            dynamic_lambda (bool): Whether to use dynamic λ scheduling during training.
+        '''
+        
+        super().__init__()
+        self.device = device
+        self.lr = lr
+        self.batch_size = batch_size
+        self.max_train_length = max_train_length
+        self.temporal_unit = temporal_unit
+        self.msm_weight = msm_weight
+        self.msm_mask_rate = msm_mask_rate
+        self.dynamic_lambda = dynamic_lambda
+        self.input_dims = input_dims
+        
+        # TS2Vec encoder (discriminative)
+        self._net = TSEncoder(
+            input_dims=input_dims, 
+            output_dims=output_dims, 
+            hidden_dims=hidden_dims, 
+            depth=depth
+        ).to(self.device)
+        
+        # MSM decoder (generative)
+        self._msm_decoder = MSMDecoder(
+            input_dims=output_dims,  # Takes encoder output
+            hidden_dims=hidden_dims,
+            depth=msm_decoder_depth
+        ).to(self.device)
+        
+        # Loss functions
+        self._msm_loss = MSMLoss(loss_type='mse')
+        
+        self.after_iter_callback = after_iter_callback
+        self.after_epoch_callback = after_epoch_callback
+        
+        self.n_epochs = 0
+        self.n_iters = 0
+        
+    def _get_dynamic_lambda(self, epoch, total_epochs):
+        """
+        Dynamic λ scheduling: start with more contrastive learning, 
+        gradually increase MSM contribution
+        """
+        if not self.dynamic_lambda:
+            return self.msm_weight
+        
+        # Cosine annealing schedule
+        progress = epoch / total_epochs
+        return 0.1 + 0.4 * (1 + math.cos(math.pi * progress)) / 2
+    
+    def _generate_msm_mask(self, batch_size, seq_len):
+        """
+        Generate masks for Masked Signal Modeling.
+        Supports both random and block masking strategies.
+        """
+        mask = torch.ones(batch_size, seq_len, dtype=torch.bool, device=self.device)
+        
+        for i in range(batch_size):
+            # Random masking strategy
+            n_mask = int(seq_len * self.msm_mask_rate)
+            mask_indices = torch.randperm(seq_len)[:n_mask]
+            mask[i, mask_indices] = False
+            
+        return mask
+    
+    def fit(self, train_data, n_epochs=None, n_iters=None, verbose=False):
+        ''' Training the TS2Vec-MSM model.
+        
+        Args:
+            train_data (numpy.ndarray): The training data. It should have a shape of (n_instance, n_timestamps, n_features). All missing data should be set to NaN.
+            n_epochs (Union[int, NoneType]): The number of epochs. When this reaches the maximum, the training stops.
+            n_iters (Union[int, NoneType]): The number of iterations. When this reaches the maximum, the training stops. If both n_epochs and n_iters are not specified, a default setting would be used that sets n_iters to 200 for a dataset with size <= 100000, 600 otherwise.
+            verbose (bool): Whether to print the training loss after each epoch.
+            
+        Returns:
+            loss_log: a list containing the training losses on each epoch.
+        '''
+        assert train_data.ndim == 3
+        
+        if n_iters is None and n_epochs is None:
+            n_iters = 200 if train_data.size <= 100000 else 600  # default param for n_iters
+            
+        if self.max_train_length is not None:
+            sections = train_data.shape[1] // self.max_train_length
+            if sections >= 2:
+                train_data = train_data[:, :self.max_train_length * sections]
+                train_data = train_data.reshape(train_data.shape[0] * sections, self.max_train_length, train_data.shape[2])
+        
+        temporal_missing = np.isnan(train_data).all(axis=-1).any(axis=0)
+        if temporal_missing[0] or temporal_missing[-1]:
+            train_data = centerize_vary_length_series(train_data)
+            
+        train_data = train_data[~np.isnan(train_data).all(axis=2).all(axis=1)]
+        
+        train_dataset = TensorDataset(torch.from_numpy(train_data).to(torch.float))
+        train_loader = DataLoader(train_dataset, batch_size=min(self.batch_size, len(train_dataset)), shuffle=True, drop_last=True)
+        
+        optimizer = torch.optim.AdamW(
+            list(self._net.parameters()) + list(self._msm_decoder.parameters()), 
+            lr=self.lr
+        )
+        
+        loss_log = []
+        
+        while True:
+            if n_epochs is not None and self.n_epochs >= n_epochs:
+                break
+            
+            cum_loss = 0
+            cum_contrastive_loss = 0
+            cum_msm_loss = 0
+            n_epoch_iters = 0
+            
+            interrupted = False
+            for batch in train_loader:
+                if n_iters is not None and self.n_iters >= n_iters:
+                    interrupted = True
+                    break
+                
+                x = batch[0]
+                if self.max_train_length is not None and x.size(1) > self.max_train_length:
+                    window_offset = np.random.randint(x.size(1) - self.max_train_length + 1)
+                    x = x[:, window_offset : window_offset + self.max_train_length]
+                x = x.to(self.device)
+                
+                # Get current λ for this epoch
+                current_lambda = self._get_dynamic_lambda(self.n_epochs, n_epochs or 100)
+                
+                optimizer.zero_grad()
+                
+                # Forward pass through encoder
+                out = self._net(x)
+                
+                # Contrastive loss (discriminative objective)
+                contrastive_loss = hierarchical_contrastive_loss(
+                    out,
+                    temporal_unit=self.temporal_unit
+                )
+                
+                # MSM loss (generative objective)
+                msm_mask = self._generate_msm_mask(x.size(0), x.size(1))
+                reconstructed = self._msm_decoder(out, msm_mask)
+                msm_loss = self._msm_loss(reconstructed, x, msm_mask)
+                
+                # Combined loss
+                total_loss = (1 - current_lambda) * contrastive_loss + current_lambda * msm_loss
+                
+                total_loss.backward()
+                optimizer.step()
+                
+                cum_loss += total_loss.item()
+                cum_contrastive_loss += contrastive_loss.item()
+                cum_msm_loss += msm_loss.item()
+                n_epoch_iters += 1
+                
+                self.n_iters += 1
+                
+                if self.after_iter_callback is not None:
+                    self.after_iter_callback(self, total_loss.item())
+            
+            if interrupted:
+                break
+            
+            cum_loss /= n_epoch_iters
+            cum_contrastive_loss /= n_epoch_iters
+            cum_msm_loss /= n_epoch_iters
+            loss_log.append(cum_loss)
+            
+            if verbose:
+                print(f"Epoch #{self.n_epochs}: loss={cum_loss:.6f} "
+                      f"(contrastive={cum_contrastive_loss:.6f}, "
+                      f"msm={cum_msm_loss:.6f}, λ={current_lambda:.3f})")
+            
+            self.n_epochs += 1
+            
+            if self.after_epoch_callback is not None:
+                self.after_epoch_callback(self, cum_loss)
+        
+        return loss_log
+    
+    def encode(self, data, mask='all_true', encoding_window=None, causal=False, sliding_length=None, sliding_padding=0, batch_size=None):
+        ''' Compute representations for the given data.
+        
+        Args:
+            data (numpy.ndarray): This should have a shape of (n_instance, n_timestamps, n_features). All missing data should be set to NaN.
+            mask (str): The mask used by encoder can be set to 'binomial', 'continuous', 'all_true', 'all_false', 'mask_last'.
+            encoding_window (Union[str, int]): When this param is specified, the computed representation would the max pooling over this window. This can be set to 'full_series', 'multiscale' or an integer specifying the pooling kernel size.
+            causal (bool): When this param is set to True, the future informations would not be encoded into representation of each timestamp.
+            sliding_length (Union[int, NoneType]): The length of sliding window. When this param is specified, a sliding inference would be applied on the time series.
+            sliding_padding (int): This param specifies the contextual data length used for inference every sliding windows.
+            batch_size (Union[int, NoneType]): The batch size used for inference. If not specified, this would be the same batch size as training.
+            
+        Returns:
+            repr: The representations for data.
+        '''
+        # Use the same encoding logic as original TS2Vec
+        assert self.training == False, "Model must be in eval mode for encoding"
+        assert data.ndim == 3
+        
+        if batch_size is None:
+            batch_size = self.batch_size
+        
+        n_samples, ts_l, _ = data.shape
+        
+        org_training = self.training
+        self.eval()
+        
+        dataset = TensorDataset(torch.from_numpy(data).to(torch.float))
+        loader = DataLoader(dataset, batch_size=batch_size)
+        
+        with torch.no_grad():
+            output = []
+            for batch in loader:
+                x = batch[0]
+                if sliding_length is not None:
+                    reprs = []
+                    if n_samples < batch_size:
+                        calc_buffer = []
+                        calc_buffer.append(x)
+                        while len(calc_buffer) * n_samples < batch_size:
+                            calc_buffer.append(x)
+                        x = torch.cat(calc_buffer, dim=0)
+                    
+                    if sliding_padding > 0:
+                        x = F.pad(x, (0, 0, sliding_padding, sliding_padding), mode='constant', value=np.nan)
+                        
+                    for i in range(x.size(1) - sliding_length + 1):
+                        out = self._net(x[:, i : i + sliding_length].to(self.device), mask)
+                        if encoding_window == 'full_series':
+                            out = F.max_pool1d(
+                                out.transpose(1, 2), 
+                                kernel_size = out.size(1),
+                            ).transpose(1, 2)
+                        elif isinstance(encoding_window, int):
+                            out = F.max_pool1d(
+                                out.transpose(1, 2), 
+                                kernel_size = encoding_window, 
+                                stride = 1,
+                                padding = encoding_window // 2
+                            ).transpose(1, 2)
+                        reprs.append(out[:n_samples])
+                    
+                    out = torch.stack(reprs, dim=1)
+                else:
+                    out = self._net(x.to(self.device), mask)
+                    if encoding_window == 'full_series':
+                        out = F.max_pool1d(
+                            out.transpose(1, 2), 
+                            kernel_size = out.size(1),
+                        ).transpose(1, 2)
+                    elif isinstance(encoding_window, int):
+                        out = F.max_pool1d(
+                            out.transpose(1, 2), 
+                            kernel_size = encoding_window, 
+                            stride = 1,
+                            padding = encoding_window // 2
+                        ).transpose(1, 2)
+                        
+                output.append(out)
+                
+        output = torch.cat(output, dim=0)
+        
+        self.train(org_training)
+        return output.cpu().numpy()
+    
+    def save(self, fn):
+        ''' Save the model to a file.
+        
+        Args:
+            fn (str): filename.
+        '''
+        torch.save({
+            'encoder': self._net.state_dict(),
+            'decoder': self._msm_decoder.state_dict(),
+            'config': {
+                'input_dims': self.input_dims,
+                'output_dims': self._net.output_dims,
+                'hidden_dims': self._net.hidden_dims,
+                'msm_weight': self.msm_weight,
+                'msm_mask_rate': self.msm_mask_rate
+            }
+        }, fn)
+    
+    def load(self, fn):
+        ''' Load the model from a file.
+        
+        Args:
+            fn (str): filename.
+        '''
+        checkpoint = torch.load(fn, map_location=self.device)
+        self._net.load_state_dict(checkpoint['encoder'])
+        self._msm_decoder.load_state_dict(checkpoint['decoder'])
+        
+    def eval(self):
+        """Set model to evaluation mode"""
+        self._net.eval()
+        self._msm_decoder.eval()
+        self.training = False
+        
+    def train(self, mode=True):
+        """Set model to training mode"""
+        self._net.train(mode)
+        self._msm_decoder.train(mode)
+        self.training = mode
