@@ -135,8 +135,6 @@ if __name__ == '__main__':
         
         print("🎉 TS2Vec-MSM UCR experiment completed successfully!")
         
-        return eval_res
-        
     except Exception as e:
         print(f"❌ Evaluation failed: {e}")
         print("🎯 Training was successful - issue is with evaluation only")
@@ -160,5 +158,3 @@ if __name__ == '__main__':
         
         np.save(f'{run_dir}/summary.npy', summary)
         print(f"💾 Training results saved to: {run_dir}")
-        
-        return None
