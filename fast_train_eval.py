@@ -36,10 +36,12 @@ if __name__ == '__main__':
     # Load anomaly data
     all_train_data, all_train_labels, all_train_timestamps, all_test_data, all_test_labels, all_test_timestamps, delay = datautils.load_anomaly(args.dataset)
     
-    # Get dimensions
-    sample_key = next(iter(all_train_data.keys()))
-    input_dims = all_train_data[sample_key].shape[-1]
-    training_data = np.concatenate(list(all_train_data.values()), axis=0)
+    # Get dimensions and prepare training data using the same method as train_msm.py
+    input_dims = 1  # Anomaly data is typically univariate
+    
+    # Generate training data using the same method as original TS2Vec
+    from datautils import gen_ano_train_data
+    training_data = gen_ano_train_data(all_train_data)
     
     print("done")
     print(f"Input dimensions: {input_dims}")
