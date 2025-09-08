@@ -112,7 +112,20 @@ if __name__ == '__main__':
         test_pred = clf.predict(test_repr_flat)
         accuracy = accuracy_score(test_labels, test_pred)
         
-        eval_res = {'acc': accuracy}
+        # Calculate AUPRC for binary/multiclass
+        try:
+            from sklearn.metrics import average_precision_score
+            proba = clf.predict_proba(test_repr_flat)
+            if proba.shape[1] == 2:  # Binary classification
+                auprc = average_precision_score(test_labels, proba[:, 1])
+            else:  # Multiclass
+                from sklearn.preprocessing import label_binarize
+                test_labels_onehot = label_binarize(test_labels, classes=np.unique(train_labels))
+                auprc = average_precision_score(test_labels_onehot, proba)
+        except:
+            auprc = 0.0  # Fallback if AUPRC calculation fails
+        
+        eval_res = {'acc': accuracy, 'auprc': auprc}
         y_score = test_pred
         
         eval_time = time.time() - eval_start
