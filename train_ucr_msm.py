@@ -85,13 +85,35 @@ if __name__ == '__main__':
     eval_start = time.time()
     
     try:
-        # Evaluate classification performance
-        y_score, eval_res = tasks.eval_classification(
-            model, 
-            train_data, train_labels, 
-            test_data, test_labels, 
-            eval_protocol='linear'
-        )
+        # Generate representations
+        print("   🔄 Encoding training data...")
+        train_repr = model.encode(train_data, encoding_window='full_series')
+        print("   🔄 Encoding test data...")
+        test_repr = model.encode(test_data, encoding_window='full_series')
+        
+        # Reshape for sklearn (flatten time dimension)
+        train_repr_flat = train_repr.reshape(train_repr.shape[0], -1)
+        test_repr_flat = test_repr.reshape(test_repr.shape[0], -1)
+        
+        print(f"   📊 Train representations: {train_repr.shape} → {train_repr_flat.shape}")
+        print(f"   📊 Test representations: {test_repr.shape} → {test_repr_flat.shape}")
+        
+        # Use sklearn directly for classification
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.preprocessing import StandardScaler
+        from sklearn.pipeline import make_pipeline
+        from sklearn.metrics import accuracy_score, classification_report
+        
+        # Create pipeline with scaling and logistic regression
+        clf = make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000))
+        clf.fit(train_repr_flat, train_labels)
+        
+        # Predictions
+        test_pred = clf.predict(test_repr_flat)
+        accuracy = accuracy_score(test_labels, test_pred)
+        
+        eval_res = {'acc': accuracy}
+        y_score = test_pred
         
         eval_time = time.time() - eval_start
         print(f"✅ Evaluation completed in: {datetime.timedelta(seconds=eval_time)}")
