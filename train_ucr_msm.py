@@ -102,22 +102,44 @@ if __name__ == '__main__':
     training_time = time.time() - t
     print(f"✅ Training completed in: {datetime.timedelta(seconds=training_time)}")
     
-    # Set model to evaluation mode
-    model.eval()
+    # FIXED: Only call eval() for TS2Vec-MSM, not baseline TS2Vec
+    if hasattr(model, 'eval'):
+        model.eval()
+        print("📊 Model set to evaluation mode")
     
     print("📊 Evaluating classification performance...")
     eval_start = time.time()
     
     try:
-        # Generate representations
+        # Generate representations using correct parameters
         print("   🔄 Encoding training data...")
-        train_repr = model.encode(train_data, encoding_window='full_series')
-        print("   🔄 Encoding test data...")
-        test_repr = model.encode(test_data, encoding_window='full_series')
+        # FIXED: Use correct encode parameters
+        train_repr = model.encode(
+            train_data,
+            causal=False,
+            sliding_length=None,
+            sliding_padding=0,
+            batch_size=args.batch_size
+        )
         
-        # Reshape for sklearn (flatten time dimension)
-        train_repr_flat = train_repr.reshape(train_repr.shape[0], -1)
-        test_repr_flat = test_repr.reshape(test_repr.shape[0], -1)
+        print("   🔄 Encoding test data...")
+        test_repr = model.encode(
+            test_data,
+            causal=False,
+            sliding_length=None,
+            sliding_padding=0,
+            batch_size=args.batch_size
+        )
+        
+        # FIXED: Handle different output shapes properly
+        if len(train_repr.shape) == 3:
+            # If output is 3D (batch, time, features), take mean over time
+            train_repr_flat = train_repr.mean(axis=1)
+            test_repr_flat = test_repr.mean(axis=1)
+        else:
+            # If output is 2D (batch, features), use directly
+            train_repr_flat = train_repr.reshape(train_repr.shape[0], -1)
+            test_repr_flat = test_repr.reshape(test_repr.shape[0], -1)
         
         print(f"   📊 Train representations: {train_repr.shape} → {train_repr_flat.shape}")
         print(f"   📊 Test representations: {test_repr.shape} → {test_repr_flat.shape}")
@@ -203,6 +225,8 @@ if __name__ == '__main__':
     except Exception as e:
         print(f"❌ Evaluation failed: {e}")
         print("🎯 Training was successful - issue is with evaluation only")
+        import traceback
+        traceback.print_exc()
         
         # Save training results anyway
         config_name = 'contrastive' if args.msm_weight == 0 else 'msm' if args.msm_weight == 1 else 'hybrid'
