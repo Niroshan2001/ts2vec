@@ -16,7 +16,7 @@ from sklearn.preprocessing import label_binarize
 from sklearn.pipeline import make_pipeline
 import json
 
-def train_and_evaluate(dataset, lambda_val, repr_dims=320, epochs=25, batch_size=8, seed=42, device='cuda'):
+def train_and_evaluate(dataset, lambda_val, repr_dims=320, use_iterations=True, epochs=25, batch_size=8, seed=42, device='cuda'):
     """Train and evaluate a single configuration"""
     
     # Set seed for reproducibility
@@ -31,6 +31,16 @@ def train_and_evaluate(dataset, lambda_val, repr_dims=320, epochs=25, batch_size
     train_data, train_labels, test_data, test_labels = datautils.load_UCR(dataset)
     input_dims = train_data.shape[-1]
     
+    # UPDATED: Use same iteration logic for both models
+    if use_iterations:
+        # Original TS2Vec approach: iterations based on dataset size
+        n_iters = 200 if train_data.size <= 100000 else 600
+        training_method = f"iterations_{n_iters}"
+    else:
+        # Epoch-based approach
+        n_iters = epochs * (len(train_data) // batch_size + 1)
+        training_method = f"epochs_{epochs}"
+    
     # Initialize model based on lambda
     if lambda_val == 0.0:
         model = TS2Vec(
@@ -41,7 +51,6 @@ def train_and_evaluate(dataset, lambda_val, repr_dims=320, epochs=25, batch_size
             batch_size=batch_size,
             max_train_length=None
         )
-        n_iters = 200 if train_data.size <= 100000 else 600
         model_type = "baseline_ts2vec"
     else:
         model = TS2VecMSM(
@@ -56,11 +65,10 @@ def train_and_evaluate(dataset, lambda_val, repr_dims=320, epochs=25, batch_size
             msm_decoder_depth=3,
             dynamic_lambda=False
         )
-        n_iters = epochs * (len(train_data) // batch_size + 1)
         model_type = "ts2vec_msm"
     
     # Training
-    print(f"🚂 Training with λ={lambda_val:.2f}...")
+    print(f"🚂 Training with λ={lambda_val:.2f} ({training_method})...")
     start_time = time.time()
     
     try:
@@ -126,6 +134,7 @@ def train_and_evaluate(dataset, lambda_val, repr_dims=320, epochs=25, batch_size
             'training_time': training_time,
             'model_type': model_type,
             'n_iters': n_iters,
+            'training_method': training_method,
             'success': True,
             'error': None
         }
@@ -139,12 +148,13 @@ def train_and_evaluate(dataset, lambda_val, repr_dims=320, epochs=25, batch_size
             'training_time': 0.0,
             'model_type': model_type,
             'n_iters': n_iters,
+            'training_method': training_method,
             'success': False,
             'error': str(e)
         }
 
 def hyperparameter_search(dataset, run_name, lambda_values=None, repr_dims_values=None, 
-                         epochs=25, batch_size=8, seed=42):
+                         use_iterations=True, epochs=25, batch_size=8, seed=42):
     """Perform hyperparameter search"""
     
     if lambda_values is None:
@@ -160,7 +170,13 @@ def hyperparameter_search(dataset, run_name, lambda_values=None, repr_dims_value
     print(f"Lambda values to test: {lambda_values}")
     print(f"Representation dimensions: {repr_dims_values}")
     print(f"Device: {device}")
-    print(f"Epochs: {epochs}")
+    
+    # UPDATED: Show training approach
+    if use_iterations:
+        print(f"Training approach: TS2Vec-style iterations (200/600 based on dataset size)")
+    else:
+        print(f"Training approach: Epoch-based ({epochs} epochs)")
+    
     print(f"Batch size: {batch_size}")
     print(f"Seed: {seed}")
     
@@ -168,6 +184,11 @@ def hyperparameter_search(dataset, run_name, lambda_values=None, repr_dims_value
     train_data, train_labels, test_data, test_labels = datautils.load_UCR(dataset)
     print(f"Train shape: {train_data.shape}, Test shape: {test_data.shape}")
     print(f"Classes: {len(np.unique(train_labels))}")
+    
+    # Show which iteration count will be used
+    n_iters_info = 200 if train_data.size <= 100000 else 600
+    print(f"Dataset size: {train_data.size} → Will use {n_iters_info} iterations" if use_iterations 
+          else f"Will use {epochs} epochs → ~{epochs * (len(train_data) // batch_size + 1)} iterations")
     
     results = []
     total_experiments = len(lambda_values) * len(repr_dims_values)
@@ -184,6 +205,7 @@ def hyperparameter_search(dataset, run_name, lambda_values=None, repr_dims_value
                 dataset=dataset,
                 lambda_val=lambda_val,
                 repr_dims=repr_dims,
+                use_iterations=use_iterations,
                 epochs=epochs,
                 batch_size=batch_size,
                 seed=seed,
@@ -202,7 +224,8 @@ def hyperparameter_search(dataset, run_name, lambda_values=None, repr_dims_value
     
     # Create results directory
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    results_dir = f"hyperparameter_results/UCR_{dataset}_{run_name}_{timestamp}"
+    approach = "iterations" if use_iterations else f"epochs_{epochs}"
+    results_dir = f"hyperparameter_results/UCR_{dataset}_{run_name}_{approach}_{timestamp}"
     os.makedirs(results_dir, exist_ok=True)
     
     # Convert to DataFrame for easier analysis
@@ -225,6 +248,7 @@ def hyperparameter_search(dataset, run_name, lambda_values=None, repr_dims_value
         
         print(f"\n=== HYPERPARAMETER TUNING RESULTS ===")
         print(f"📊 Dataset: {dataset}")
+        print(f"🎯 Training approach: {approach}")
         print(f"📈 Total experiments: {total_experiments}")
         print(f"✅ Successful experiments: {len(successful_results)}")
         print(f"❌ Failed experiments: {total_experiments - len(successful_results)}")
@@ -235,6 +259,7 @@ def hyperparameter_search(dataset, run_name, lambda_values=None, repr_dims_value
         print(f"   AUPRC = {best_accuracy['auprc']:.4f}")
         print(f"   Final loss = {best_accuracy['final_loss']:.6f}")
         print(f"   Training time = {best_accuracy['training_time']:.1f}s")
+        print(f"   Iterations = {best_accuracy['n_iters']}")
         
         print(f"\n🎯 BEST AUPRC: {best_auprc['auprc']:.4f}")
         print(f"   λ = {best_auprc['lambda']:.2f}")
@@ -242,27 +267,25 @@ def hyperparameter_search(dataset, run_name, lambda_values=None, repr_dims_value
         print(f"   Accuracy = {best_auprc['accuracy']:.4f}")
         print(f"   Final loss = {best_auprc['final_loss']:.6f}")
         print(f"   Training time = {best_auprc['training_time']:.1f}s")
+        print(f"   Iterations = {best_auprc['n_iters']}")
         
         # Lambda analysis
-        lambda_analysis = successful_results.groupby('lambda').agg({
-            'accuracy': ['mean', 'std', 'max'],
-            'auprc': ['mean', 'std', 'max'],
-            'training_time': 'mean'
-        }).round(4)
-        
         print(f"\n📊 LAMBDA ANALYSIS:")
-        print("Lambda\tAcc_Mean\tAcc_Std\tAcc_Max\tAUPRC_Mean\tAUPRC_Std\tAUPRC_Max\tTime_Mean")
-        for lambda_val in successful_results['lambda'].unique():
+        print("Lambda\tAcc_Mean\tAcc_Std\tAcc_Max\tAUPRC_Mean\tAUPRC_Std\tAUPRC_Max\tTime_Mean\tIters")
+        for lambda_val in sorted(successful_results['lambda'].unique()):
             subset = successful_results[successful_results['lambda'] == lambda_val]
             print(f"{lambda_val:.1f}\t{subset['accuracy'].mean():.4f}\t\t"
                   f"{subset['accuracy'].std():.4f}\t{subset['accuracy'].max():.4f}\t"
                   f"{subset['auprc'].mean():.4f}\t\t{subset['auprc'].std():.4f}\t"
-                  f"{subset['auprc'].max():.4f}\t\t{subset['training_time'].mean():.1f}s")
+                  f"{subset['auprc'].max():.4f}\t\t{subset['training_time'].mean():.1f}s\t"
+                  f"{subset['n_iters'].iloc[0]}")
         
         # Save summary
         summary = {
             'dataset': dataset,
             'timestamp': timestamp,
+            'training_approach': approach,
+            'use_iterations': use_iterations,
             'total_experiments': total_experiments,
             'successful_experiments': len(successful_results),
             'best_accuracy': {
@@ -271,7 +294,8 @@ def hyperparameter_search(dataset, run_name, lambda_values=None, repr_dims_value
                 'accuracy': float(best_accuracy['accuracy']),
                 'auprc': float(best_accuracy['auprc']),
                 'final_loss': float(best_accuracy['final_loss']),
-                'training_time': float(best_accuracy['training_time'])
+                'training_time': float(best_accuracy['training_time']),
+                'n_iters': int(best_accuracy['n_iters'])
             },
             'best_auprc': {
                 'lambda': float(best_auprc['lambda']),
@@ -279,7 +303,8 @@ def hyperparameter_search(dataset, run_name, lambda_values=None, repr_dims_value
                 'accuracy': float(best_auprc['accuracy']),
                 'auprc': float(best_auprc['auprc']),
                 'final_loss': float(best_auprc['final_loss']),
-                'training_time': float(best_auprc['training_time'])
+                'training_time': float(best_auprc['training_time']),
+                'n_iters': int(best_auprc['n_iters'])
             }
         }
         
@@ -292,7 +317,10 @@ def hyperparameter_search(dataset, run_name, lambda_values=None, repr_dims_value
         # Recommendation
         print(f"\n🎯 RECOMMENDATION:")
         print(f"   For best accuracy: Use λ = {best_accuracy['lambda']:.2f}")
-        print(f"   Command: python train_ucr_msm.py {dataset} best_config --msm-weight {best_accuracy['lambda']:.2f} --repr-dims {best_accuracy['repr_dims']} --epochs {epochs}")
+        if use_iterations:
+            print(f"   Command: python train_ucr_msm.py {dataset} best_config --msm-weight {best_accuracy['lambda']:.2f} --repr-dims {best_accuracy['repr_dims']} --use-iterations")
+        else:
+            print(f"   Command: python train_ucr_msm.py {dataset} best_config --msm-weight {best_accuracy['lambda']:.2f} --repr-dims {best_accuracy['repr_dims']} --epochs {epochs}")
         
         return best_accuracy['lambda'], best_accuracy['accuracy'], results_dir
     
@@ -308,10 +336,11 @@ if __name__ == '__main__':
     parser.add_argument('--lambda-max', type=float, default=1.0, help='Maximum lambda value')
     parser.add_argument('--lambda-step', type=float, default=0.1, help='Lambda step size')
     parser.add_argument('--repr-dims', type=int, nargs='+', default=[320], help='Representation dimensions to test')
-    parser.add_argument('--epochs', type=int, default=25, help='Number of training epochs')
+    parser.add_argument('--epochs', type=int, default=25, help='Number of training epochs (for epoch-based training)')
     parser.add_argument('--batch-size', type=int, default=8, help='Batch size')
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
     parser.add_argument('--quick', action='store_true', help='Quick test with fewer lambda values')
+    parser.add_argument('--use-epochs', action='store_true', help='Use epoch-based training instead of iterations')
     
     args = parser.parse_args()
     
@@ -323,12 +352,16 @@ if __name__ == '__main__':
         lambda_values = np.arange(args.lambda_min, args.lambda_max + args.lambda_step, args.lambda_step).round(2).tolist()
         print(f"🔍 Full mode: Testing {len(lambda_values)} lambda values")
     
+    # UPDATED: Choose training approach
+    use_iterations = not args.use_epochs
+    
     # Run hyperparameter search
     best_lambda, best_accuracy, results_dir = hyperparameter_search(
         dataset=args.dataset,
         run_name=args.run_name,
         lambda_values=lambda_values,
         repr_dims_values=args.repr_dims,
+        use_iterations=use_iterations,
         epochs=args.epochs,
         batch_size=args.batch_size,
         seed=args.seed
