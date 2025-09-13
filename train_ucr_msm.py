@@ -27,7 +27,11 @@ if __name__ == '__main__':
     
     print("=== TS2Vec-MSM UCR Classification ===")
     print(f"Dataset: {args.dataset}")
-    print(f"MSM Weight (λ): {args.msm_weight}")
+    print(f"MSM Weight (λ): {args.msm_weight}")  # BUG: This should show the actual parsed value
+    
+    # Debug: Print the actual arguments to verify parsing
+    print(f"DEBUG - Parsed msm_weight: {args.msm_weight}")
+    print(f"DEBUG - Type: {type(args.msm_weight)}")
     
     # Determine training approach
     use_iterations = not args.use_epochs
@@ -75,9 +79,13 @@ if __name__ == '__main__':
         training_method = f"epochs_{args.epochs}"
         print(f"📊 Using {args.epochs} epochs → {n_iters} iterations")
     
+    # FIXED: Better condition checking for lambda == 0.0
+    print(f"DEBUG - Checking lambda: {args.msm_weight} == 0.0 ? {args.msm_weight == 0.0}")
+    print(f"DEBUG - abs(lambda) < 1e-8 ? {abs(args.msm_weight) < 1e-8}")
+    
     # Initialize model based on lambda (both use same training iterations and parameters now)
-    if args.msm_weight == 0.0:
-        print("🎯 Using baseline TS2Vec (λ=0.0 - pure contrastive learning)")
+    if abs(args.msm_weight) < 1e-8:  # Use tolerance for float comparison
+        print("🎯 Using baseline TS2Vec (λ≈0.0 - pure contrastive learning)")
         model = TS2Vec(
             input_dims=input_dims,
             output_dims=args.repr_dims,
@@ -155,7 +163,7 @@ if __name__ == '__main__':
             print(f"✅ Evaluation completed in: {datetime.timedelta(seconds=eval_time)}")
             
             # Save results with training method info
-            config_name = 'contrastive' if args.msm_weight == 0 else 'msm' if args.msm_weight == 1 else 'hybrid'
+            config_name = 'contrastive' if abs(args.msm_weight) < 1e-8 else 'msm' if abs(args.msm_weight - 1.0) < 1e-8 else 'hybrid'
             approach = "iterations" if use_iterations else f"epochs_{args.epochs}"
             run_dir = f'training/UCR_{args.dataset}__{args.run_name}_lambda_{args.msm_weight}_{config_name}_{model_type}_{approach}'
             os.makedirs(run_dir, exist_ok=True)
@@ -199,8 +207,8 @@ if __name__ == '__main__':
             traceback.print_exc()
             
             # Save training results anyway
-            config_name = 'contrastive' if args.msm_weight == 0 else 'msm' if args.msm_weight == 1 else 'hybrid'
-            model_type_fallback = "baseline_ts2vec" if args.msm_weight == 0 else "ts2vec_msm"
+            config_name = 'contrastive' if abs(args.msm_weight) < 1e-8 else 'msm' if abs(args.msm_weight - 1.0) < 1e-8 else 'hybrid'
+            model_type_fallback = "baseline_ts2vec" if abs(args.msm_weight) < 1e-8 else "ts2vec_msm"
             approach = "iterations" if use_iterations else f"epochs_{args.epochs}"
             run_dir = f'training/UCR_{args.dataset}__{args.run_name}_lambda_{args.msm_weight}_{config_name}_{model_type_fallback}_{approach}_train_only'
             os.makedirs(run_dir, exist_ok=True)
@@ -232,7 +240,7 @@ if __name__ == '__main__':
         print("Skipping evaluation (use --eval flag to enable)")
         
         # Save training results only
-        config_name = 'contrastive' if args.msm_weight == 0 else 'msm' if args.msm_weight == 1 else 'hybrid'
+        config_name = 'contrastive' if abs(args.msm_weight) < 1e-8 else 'msm' if abs(args.msm_weight - 1.0) < 1e-8 else 'hybrid'
         approach = "iterations" if use_iterations else f"epochs_{args.epochs}"
         run_dir = f'training/UCR_{args.dataset}__{args.run_name}_lambda_{args.msm_weight}_{config_name}_{model_type}_{approach}_train_only'
         os.makedirs(run_dir, exist_ok=True)
