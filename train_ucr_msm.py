@@ -19,7 +19,9 @@ if __name__ == '__main__':
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
     parser.add_argument('--epochs', type=int, default=20, help='Number of training epochs (for epoch-based training)')
     parser.add_argument('--batch-size', type=int, default=8, help='Batch size')
+    parser.add_argument('--max-train-length', type=int, default=3000, help='Maximum training sequence length (use None for full sequences)')
     parser.add_argument('--use-epochs', action='store_true', help='Use epoch-based training instead of TS2Vec-style iterations')
+    parser.add_argument('--eval', action='store_true', help='Whether to perform evaluation after training')
     
     args = parser.parse_args()
     
@@ -36,6 +38,7 @@ if __name__ == '__main__':
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Device: {device}")
+    print(f"Max train length: {args.max_train_length}")
     
     if args.seed is not None:
         np.random.seed(args.seed)
@@ -72,16 +75,16 @@ if __name__ == '__main__':
         training_method = f"epochs_{args.epochs}"
         print(f"📊 Using {args.epochs} epochs → {n_iters} iterations")
     
-    # Initialize model based on lambda (both use same training iterations now)
+    # Initialize model based on lambda (both use same training iterations and parameters now)
     if args.msm_weight == 0.0:
         print("🎯 Using baseline TS2Vec (λ=0.0 - pure contrastive learning)")
         model = TS2Vec(
             input_dims=input_dims,
             output_dims=args.repr_dims,
             device=device,
-            lr=0.001,
+            lr=0.001,  # Same as original
             batch_size=args.batch_size,
-            max_train_length=None  # Use full sequences for UCR
+            max_train_length=args.max_train_length  # UPDATED: Use same as original (3000)
         )
         model_type = "baseline_ts2vec"
         
@@ -91,9 +94,9 @@ if __name__ == '__main__':
             input_dims=input_dims,
             output_dims=args.repr_dims,
             device=device,
-            lr=0.001,
+            lr=0.001,  # Same as original
             batch_size=args.batch_size,
-            max_train_length=None,  # Use full sequences for UCR
+            max_train_length=args.max_train_length,  # UPDATED: Use same as original (3000)
             msm_weight=args.msm_weight,
             msm_mask_rate=0.15,
             msm_decoder_depth=3,
@@ -112,96 +115,131 @@ if __name__ == '__main__':
     
     training_time = time.time() - t
     print(f"✅ Training completed in: {datetime.timedelta(seconds=training_time)}")
+    print(f"Training time: {datetime.timedelta(seconds=training_time)}")
     
-    # Set to eval mode if available
-    if hasattr(model, 'eval'):
-        model.eval()
-        print("📊 Model set to evaluation mode")
-    
-    print("📊 Evaluating classification performance...")
-    eval_start = time.time()
-    
-    try:
-        # Generate representations using correct parameters
-        print("   🔄 Encoding training data...")
-        train_repr = model.encode(
-            train_data,
-            causal=False,
-            sliding_length=None,
-            sliding_padding=0,
-            batch_size=args.batch_size
-        )
+    # Evaluation (only if --eval flag is provided, like original)
+    if args.eval:
+        # Set to eval mode if available
+        if hasattr(model, 'eval'):
+            model.eval()
+            print("📊 Model set to evaluation mode")
         
-        print("   🔄 Encoding test data...")
-        test_repr = model.encode(
-            test_data,
-            causal=False,
-            sliding_length=None,
-            sliding_padding=0,
-            batch_size=args.batch_size
-        )
+        print("📊 Evaluating classification performance...")
+        eval_start = time.time()
         
-        # Handle different output shapes properly
-        if len(train_repr.shape) == 3:
-            # If output is 3D (batch, time, features), take mean over time
-            train_repr_flat = train_repr.mean(axis=1)
-            test_repr_flat = test_repr.mean(axis=1)
-        else:
-            # If output is 2D (batch, features), use directly
-            train_repr_flat = train_repr.reshape(train_repr.shape[0], -1)
-            test_repr_flat = test_repr.reshape(test_repr.shape[0], -1)
-        
-        print(f"   📊 Train representations: {train_repr.shape} → {train_repr_flat.shape}")
-        print(f"   📊 Test representations: {test_repr.shape} → {test_repr_flat.shape}")
-        
-        # Use sklearn directly for classification
-        from sklearn.linear_model import LogisticRegression
-        from sklearn.preprocessing import StandardScaler
-        from sklearn.pipeline import make_pipeline
-        from sklearn.metrics import accuracy_score, classification_report
-        
-        # Create pipeline with scaling and logistic regression
-        clf = make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000, random_state=args.seed))
-        clf.fit(train_repr_flat, train_labels)
-        
-        # Predictions
-        test_pred = clf.predict(test_repr_flat)
-        accuracy = accuracy_score(test_labels, test_pred)
-        
-        # Calculate AUPRC for binary/multiclass
         try:
-            from sklearn.metrics import average_precision_score
-            from sklearn.preprocessing import label_binarize
-            proba = clf.predict_proba(test_repr_flat)
-            if proba.shape[1] == 2:  # Binary classification
-                auprc = average_precision_score(test_labels, proba[:, 1])
-            else:  # Multiclass
-                test_labels_onehot = label_binarize(test_labels, classes=np.unique(train_labels))
-                if test_labels_onehot.ndim == 1:
-                    test_labels_onehot = test_labels_onehot.reshape(-1, 1)
-                auprc = average_precision_score(test_labels_onehot, proba, average='weighted')
-        except Exception as auprc_error:
-            print(f"   ⚠️  AUPRC calculation warning: {auprc_error}")
-            auprc = 0.0  # Fallback if AUPRC calculation fails
+            # Generate representations using same approach as original
+            print("   🔄 Encoding training data...")
+            train_repr = model.encode(
+                train_data,
+                causal=False,
+                sliding_length=None,
+                sliding_padding=0,
+                batch_size=args.batch_size
+            )
+            
+            print("   🔄 Encoding test data...")
+            test_repr = model.encode(
+                test_data,
+                causal=False,
+                sliding_length=None,
+                sliding_padding=0,
+                batch_size=args.batch_size
+            )
+            
+            # Use the same evaluation approach as original TS2Vec
+            # UPDATED: Use tasks.eval_classification like original
+            eval_res = tasks.eval_classification(train_repr, train_labels, test_repr, test_labels, eval_protocol='linear')
+            
+            eval_time = time.time() - eval_start
+            print(f"✅ Evaluation completed in: {datetime.timedelta(seconds=eval_time)}")
+            
+            # Save results with training method info
+            config_name = 'contrastive' if args.msm_weight == 0 else 'msm' if args.msm_weight == 1 else 'hybrid'
+            approach = "iterations" if use_iterations else f"epochs_{args.epochs}"
+            run_dir = f'training/UCR_{args.dataset}__{args.run_name}_lambda_{args.msm_weight}_{config_name}_{model_type}_{approach}'
+            os.makedirs(run_dir, exist_ok=True)
+            
+            model.save(f'{run_dir}/model.pkl')
+            np.save(f'{run_dir}/loss_log.npy', loss_log)
+            np.save(f'{run_dir}/eval_res.npy', eval_res)
+            
+            # Enhanced summary with training method info
+            summary = {
+                'dataset': args.dataset,
+                'lambda': args.msm_weight,
+                'configuration': config_name,
+                'model_type': model_type,
+                'training_method': training_method,
+                'use_iterations': use_iterations,
+                'final_loss': float(loss_log[-1]) if len(loss_log) > 0 else None,
+                'training_time': training_time,
+                'eval_time': eval_time,
+                'accuracy': eval_res['acc'],
+                'auprc': eval_res['auprc'],
+                'n_iters': n_iters,
+                'epochs_specified': args.epochs,
+                'batch_size': args.batch_size,
+                'seed': args.seed,
+                'dataset_size': train_data.size,
+                'max_train_length': args.max_train_length
+            }
+            
+            np.save(f'{run_dir}/summary.npy', summary)
+            print(f"💾 Results saved to: {run_dir}")
+            
+            # Results Analysis (same format as original)
+            print(f"\nEvaluation result: {eval_res}")
+            print("Finished.")
+            
+        except Exception as e:
+            print(f"❌ Evaluation failed: {e}")
+            print("🎯 Training was successful - issue is with evaluation only")
+            import traceback
+            traceback.print_exc()
+            
+            # Save training results anyway
+            config_name = 'contrastive' if args.msm_weight == 0 else 'msm' if args.msm_weight == 1 else 'hybrid'
+            model_type_fallback = "baseline_ts2vec" if args.msm_weight == 0 else "ts2vec_msm"
+            approach = "iterations" if use_iterations else f"epochs_{args.epochs}"
+            run_dir = f'training/UCR_{args.dataset}__{args.run_name}_lambda_{args.msm_weight}_{config_name}_{model_type_fallback}_{approach}_train_only'
+            os.makedirs(run_dir, exist_ok=True)
+            
+            model.save(f'{run_dir}/model.pkl')
+            np.save(f'{run_dir}/loss_log.npy', loss_log)
+            
+            summary = {
+                'dataset': args.dataset,
+                'lambda': args.msm_weight,
+                'configuration': config_name,
+                'model_type': model_type_fallback,
+                'training_method': training_method,
+                'use_iterations': use_iterations,
+                'final_loss': float(loss_log[-1]) if len(loss_log) > 0 else None,
+                'training_time': training_time,
+                'evaluation': 'failed',
+                'n_iters': n_iters,
+                'epochs_specified': args.epochs,
+                'batch_size': args.batch_size,
+                'seed': args.seed,
+                'dataset_size': train_data.size,
+                'max_train_length': args.max_train_length
+            }
+            
+            np.save(f'{run_dir}/summary.npy', summary)
+            print(f"💾 Training results saved to: {run_dir}")
+    else:
+        print("Skipping evaluation (use --eval flag to enable)")
         
-        eval_res = {'acc': accuracy, 'auprc': auprc}
-        y_score = test_pred
-        
-        eval_time = time.time() - eval_start
-        print(f"✅ Evaluation completed in: {datetime.timedelta(seconds=eval_time)}")
-        
-        # Save results with training method info
+        # Save training results only
         config_name = 'contrastive' if args.msm_weight == 0 else 'msm' if args.msm_weight == 1 else 'hybrid'
         approach = "iterations" if use_iterations else f"epochs_{args.epochs}"
-        run_dir = f'training/UCR_{args.dataset}__{args.run_name}_lambda_{args.msm_weight}_{config_name}_{model_type}_{approach}'
+        run_dir = f'training/UCR_{args.dataset}__{args.run_name}_lambda_{args.msm_weight}_{config_name}_{model_type}_{approach}_train_only'
         os.makedirs(run_dir, exist_ok=True)
         
         model.save(f'{run_dir}/model.pkl')
         np.save(f'{run_dir}/loss_log.npy', loss_log)
-        np.save(f'{run_dir}/eval_res.npy', eval_res)
-        np.save(f'{run_dir}/y_score.npy', y_score)
         
-        # Enhanced summary with training method info
         summary = {
             'dataset': args.dataset,
             'lambda': args.msm_weight,
@@ -211,69 +249,15 @@ if __name__ == '__main__':
             'use_iterations': use_iterations,
             'final_loss': float(loss_log[-1]) if len(loss_log) > 0 else None,
             'training_time': training_time,
-            'eval_time': eval_time,
-            'accuracy': eval_res['acc'],
-            'auprc': eval_res['auprc'],
+            'evaluation': 'skipped',
             'n_iters': n_iters,
             'epochs_specified': args.epochs,
             'batch_size': args.batch_size,
             'seed': args.seed,
-            'dataset_size': train_data.size
-        }
-        
-        np.save(f'{run_dir}/summary.npy', summary)
-        print(f"💾 Results saved to: {run_dir}")
-        
-        # Results Analysis
-        print(f"\n=== TS2Vec-MSM UCR RESULTS ===")
-        print(f"📊 Dataset: {args.dataset}")
-        print(f"🎯 Configuration: λ={args.msm_weight} ({config_name.title()}) using {model_type}")
-        print(f"🔧 Training method: {training_method}")
-        print(f"📈 Final training loss: {loss_log[-1]:.6f}")
-        print(f"⏱️  Training time: {datetime.timedelta(seconds=training_time)}")
-        print(f"⏱️  Evaluation time: {datetime.timedelta(seconds=eval_time)}")
-        print(f"🎯 Classification Accuracy: {eval_res['acc']:.4f}")
-        print(f"📈 AUPRC: {eval_res['auprc']:.4f}")
-        print(f"🔧 Training iterations: {n_iters}")
-        
-        if use_iterations:
-            equivalent_epochs = n_iters * args.batch_size / len(train_data)
-            print(f"📊 Equivalent epochs: ~{equivalent_epochs:.2f}")
-        
-        print("🎉 TS2Vec-MSM UCR experiment completed successfully!")
-        
-    except Exception as e:
-        print(f"❌ Evaluation failed: {e}")
-        print("🎯 Training was successful - issue is with evaluation only")
-        import traceback
-        traceback.print_exc()
-        
-        # Save training results anyway
-        config_name = 'contrastive' if args.msm_weight == 0 else 'msm' if args.msm_weight == 1 else 'hybrid'
-        model_type_fallback = "baseline_ts2vec" if args.msm_weight == 0 else "ts2vec_msm"
-        approach = "iterations" if use_iterations else f"epochs_{args.epochs}"
-        run_dir = f'training/UCR_{args.dataset}__{args.run_name}_lambda_{args.msm_weight}_{config_name}_{model_type_fallback}_{approach}_train_only'
-        os.makedirs(run_dir, exist_ok=True)
-        
-        model.save(f'{run_dir}/model.pkl')
-        np.save(f'{run_dir}/loss_log.npy', loss_log)
-        
-        summary = {
-            'dataset': args.dataset,
-            'lambda': args.msm_weight,
-            'configuration': config_name,
-            'model_type': model_type_fallback,
-            'training_method': training_method,
-            'use_iterations': use_iterations,
-            'final_loss': float(loss_log[-1]) if len(loss_log) > 0 else None,
-            'training_time': training_time,
-            'evaluation': 'failed',
-            'n_iters': n_iters,
-            'epochs_specified': args.epochs,
-            'batch_size': args.batch_size,
-            'seed': args.seed,
-            'dataset_size': train_data.size
+            'dataset_size': train_data.size,
+            'max_train_length': args.max_train_length
         }
         
         np.save(f'{run_dir}/summary.npy', summary)
         print(f"💾 Training results saved to: {run_dir}")
+        print("Finished.")
