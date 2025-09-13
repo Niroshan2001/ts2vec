@@ -14,7 +14,6 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, average_precision_score
 from sklearn.preprocessing import label_binarize
 from sklearn.pipeline import make_pipeline
-from sklearn.metrics import accuracy_score, average_precision_score, label_binarize
 import json
 
 def train_and_evaluate(dataset, lambda_val, repr_dims=320, epochs=25, batch_size=8, seed=42, device='cuda'):
