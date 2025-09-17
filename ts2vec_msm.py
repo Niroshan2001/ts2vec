@@ -249,6 +249,51 @@ class TS2VecMSM:
         
         return loss_log
     
+    def _eval_with_pooling(self, x, mask=None, slicing=None, encoding_window=None):
+        """Helper method for encoding with pooling (same as original TS2Vec)"""
+        out = self._net(x.to(self.device, non_blocking=True), mask)
+        if encoding_window == 'full_series':
+            if slicing is not None:
+                out = out[:, slicing]
+            out = F.max_pool1d(
+                out.transpose(1, 2),
+                kernel_size = out.size(1),
+            ).transpose(1, 2)
+            
+        elif isinstance(encoding_window, int):
+            out = F.max_pool1d(
+                out.transpose(1, 2),
+                kernel_size = encoding_window,
+                stride = 1,
+                padding = encoding_window // 2
+            ).transpose(1, 2)
+            if encoding_window % 2 == 0:
+                out = out[:, :-1]
+            if slicing is not None:
+                out = out[:, slicing]
+            
+        elif encoding_window == 'multiscale':
+            p = 0
+            reprs = []
+            while (1 << p) + 1 < out.size(1):
+                t_out = F.max_pool1d(
+                    out.transpose(1, 2),
+                    kernel_size = (1 << (p + 1)) + 1,
+                    stride = 1,
+                    padding = 1 << p
+                ).transpose(1, 2)
+                if slicing is not None:
+                    t_out = t_out[:, slicing]
+                reprs.append(t_out)
+                p += 1
+            out = torch.cat(reprs, dim=-1)
+            
+        else:
+            if slicing is not None:
+                out = out[:, slicing]
+                
+        return out.cpu()
+    
     def encode(self, data, mask='all_true', encoding_window=None, causal=False, sliding_length=None, sliding_padding=0, batch_size=None):
         ''' Compute representations for the given data.
         
@@ -307,20 +352,12 @@ class TS2VecMSM:
                         chunk_reprs = []
                         
                         for i in range(start_i, end_i):
-                            out = self._net(x[:, i : i + sliding_length].to(self.device), mask)
-                            if encoding_window == 'full_series':
-                                out = F.max_pool1d(
-                                    out.transpose(1, 2), 
-                                    kernel_size = out.size(1),
-                                ).squeeze(1)  # FIXED: Add squeeze(1) for sliding windows too
-                            elif isinstance(encoding_window, int):
-                                out = F.max_pool1d(
-                                    out.transpose(1, 2), 
-                                    kernel_size = encoding_window, 
-                                    stride = 1,
-                                    padding = encoding_window // 2
-                                ).transpose(1, 2)
-                            chunk_reprs.append(out[:n_samples].cpu())  # Move to CPU immediately
+                            out = self._eval_with_pooling(
+                                x[:, i : i + sliding_length].to(self.device), 
+                                mask,
+                                encoding_window=encoding_window
+                            )
+                            chunk_reprs.append(out[:n_samples])  # Already moved to CPU in _eval_with_pooling
                         
                         reprs.extend(chunk_reprs)
                         
@@ -329,22 +366,17 @@ class TS2VecMSM:
                             torch.cuda.empty_cache()
                     
                     out = torch.stack(reprs, dim=1)
-                else:
-                    out = self._net(x.to(self.device), mask)
                     if encoding_window == 'full_series':
                         out = F.max_pool1d(
-                            out.transpose(1, 2), 
+                            out.transpose(1, 2).contiguous(),
                             kernel_size = out.size(1),
-                        ).squeeze(1)  # FIXED: Add squeeze(1) to convert from 3D to 2D
-                    elif isinstance(encoding_window, int):
-                        out = F.max_pool1d(
-                            out.transpose(1, 2), 
-                            kernel_size = encoding_window, 
-                            stride = 1,
-                            padding = encoding_window // 2
-                        ).transpose(1, 2)
+                        ).squeeze(1)
+                else:
+                    out = self._eval_with_pooling(x, mask, encoding_window=encoding_window)
+                    if encoding_window == 'full_series':
+                        out = out.squeeze(1)
                         
-                output.append(out.cpu())  # Move to CPU immediately
+                output.append(out)
                 
                 # Clear CUDA cache after each batch
                 if torch.cuda.is_available():
