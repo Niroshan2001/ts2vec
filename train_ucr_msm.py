@@ -155,9 +155,47 @@ if __name__ == '__main__':
                 batch_size=args.batch_size
             )
             
-            # Use the same evaluation approach as original TS2Vec
-            # UPDATED: Use tasks.eval_classification like original
-            eval_res = tasks.eval_classification(train_repr, train_labels, test_repr, test_labels, eval_protocol='linear')
+            # FIXED: Use sklearn-based evaluation instead of tasks.eval_classification
+            print("   🔄 Using sklearn-based evaluation...")
+            
+            # Flatten representations if needed
+            if len(train_repr.shape) == 3:
+                train_repr_flat = train_repr.mean(axis=1)
+                test_repr_flat = test_repr.mean(axis=1)
+            else:
+                train_repr_flat = train_repr.reshape(train_repr.shape[0], -1)
+                test_repr_flat = test_repr.reshape(test_repr.shape[0], -1)
+            
+            # Use sklearn for evaluation
+            from sklearn.linear_model import LogisticRegression
+            from sklearn.preprocessing import StandardScaler
+            from sklearn.pipeline import make_pipeline
+            from sklearn.metrics import accuracy_score, average_precision_score
+            from sklearn.preprocessing import label_binarize
+            
+            # Create pipeline with scaling and logistic regression
+            clf = make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000, random_state=args.seed))
+            clf.fit(train_repr_flat, train_labels)
+            
+            # Predictions
+            test_pred = clf.predict(test_repr_flat)
+            accuracy = accuracy_score(test_labels, test_pred)
+            
+            # Calculate AUPRC
+            try:
+                proba = clf.predict_proba(test_repr_flat)
+                if proba.shape[1] == 2:  # Binary classification
+                    auprc = average_precision_score(test_labels, proba[:, 1])
+                else:  # Multiclass
+                    test_labels_onehot = label_binarize(test_labels, classes=np.unique(train_labels))
+                    if test_labels_onehot.ndim == 1:
+                        test_labels_onehot = test_labels_onehot.reshape(-1, 1)
+                    auprc = average_precision_score(test_labels_onehot, proba, average='weighted')
+            except Exception as auprc_error:
+                print(f"   ⚠️  AUPRC calculation warning: {auprc_error}")
+                auprc = 0.0
+            
+            eval_res = {'acc': accuracy, 'auprc': auprc}
             
             eval_time = time.time() - eval_start
             print(f"✅ Evaluation completed in: {datetime.timedelta(seconds=eval_time)}")
