@@ -155,11 +155,66 @@ if __name__ == '__main__':
                 batch_size=args.batch_size
             )
             
-            # FIXED: Use same evaluation method as original TS2Vec
+            # FIXED: Use same evaluation method as original TS2Vec with debug info
             print("   🔄 Using original TS2Vec evaluation (SVM-based)...")
             
-            # Use the same evaluation approach as original TS2Vec with SVM
-            _, eval_res = tasks.eval_classification(model, train_data, train_labels, test_data, test_labels, eval_protocol='svm')
+            # DEBUG: Let's check the representation shapes before evaluation
+            print("   🔍 DEBUG: Checking representation shapes...")
+            train_repr = model.encode(train_data, encoding_window='full_series')
+            test_repr = model.encode(test_data, encoding_window='full_series')
+            
+            print(f"   📊 Train repr shape: {train_repr.shape}")
+            print(f"   📊 Test repr shape: {test_repr.shape}")
+            print(f"   📊 Train repr type: {type(train_repr)}")
+            print(f"   📊 Test repr type: {type(test_repr)}")
+            
+            # Check if we still have 3D arrays and need manual flattening
+            if len(train_repr.shape) == 3:
+                print("   ⚠️  Still getting 3D arrays, manually flattening...")
+                train_repr = train_repr.reshape(train_repr.shape[0], -1)
+                test_repr = test_repr.reshape(test_repr.shape[0], -1)
+                print(f"   📊 After flattening - Train: {train_repr.shape}, Test: {test_repr.shape}")
+                
+                # Use manual evaluation with SVM
+                from sklearn.svm import SVC
+                from sklearn.model_selection import GridSearchCV
+                from sklearn.preprocessing import StandardScaler
+                from sklearn.pipeline import Pipeline
+                from sklearn.metrics import accuracy_score, average_precision_score
+                from sklearn.preprocessing import label_binarize
+                
+                # Create SVM pipeline (same as original)
+                pipe = Pipeline([
+                    ('scaler', StandardScaler()),
+                    ('svm', SVC(probability=True))
+                ])
+                
+                param_grid = {
+                    'svm__C': [0.01, 0.1, 1, 10, 100],
+                    'svm__gamma': ['scale', 'auto', 0.001, 0.01, 0.1, 1]
+                }
+                
+                grid_search = GridSearchCV(pipe, param_grid, cv=5, scoring='accuracy', n_jobs=1)
+                grid_search.fit(train_repr, train_labels)
+                
+                # Predictions
+                test_pred = grid_search.predict(test_repr)
+                test_proba = grid_search.predict_proba(test_repr)
+                
+                accuracy = accuracy_score(test_labels, test_pred)
+                
+                # Calculate AUPRC
+                try:
+                    test_labels_onehot = label_binarize(test_labels, classes=np.arange(train_labels.max()+1))
+                    auprc = average_precision_score(test_labels_onehot, test_proba)
+                except Exception as auprc_error:
+                    print(f"   ⚠️  AUPRC calculation warning: {auprc_error}")
+                    auprc = 0.0
+                
+                eval_res = {'acc': accuracy, 'auprc': auprc}
+            else:
+                # Use original evaluation method
+                _, eval_res = tasks.eval_classification(model, train_data, train_labels, test_data, test_labels, eval_protocol='svm')
             
             eval_time = time.time() - eval_start
             print(f"✅ Evaluation completed in: {datetime.timedelta(seconds=eval_time)}")
