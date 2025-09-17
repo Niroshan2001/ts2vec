@@ -312,7 +312,7 @@ class TS2VecMSM:
                                 out = F.max_pool1d(
                                     out.transpose(1, 2), 
                                     kernel_size = out.size(1),
-                                ).transpose(1, 2)
+                                ).squeeze(1)  # FIXED: Add squeeze(1) for sliding windows too
                             elif isinstance(encoding_window, int):
                                 out = F.max_pool1d(
                                     out.transpose(1, 2), 
@@ -335,7 +335,7 @@ class TS2VecMSM:
                         out = F.max_pool1d(
                             out.transpose(1, 2), 
                             kernel_size = out.size(1),
-                        ).transpose(1, 2)
+                        ).squeeze(1)  # FIXED: Add squeeze(1) to convert from 3D to 2D
                     elif isinstance(encoding_window, int):
                         out = F.max_pool1d(
                             out.transpose(1, 2), 
