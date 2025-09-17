@@ -89,15 +89,46 @@ class TS2VecMSM:
         
     def _get_dynamic_lambda(self, epoch, total_epochs):
         """
-        Dynamic λ scheduling: start with more contrastive learning, 
-        gradually increase MSM contribution
+        Dynamic λ scheduling: start with contrastive learning, gradually add MSM
+        
+        Multiple scheduling strategies available:
+        1. Linear: Start at 0, linearly increase to target lambda
+        2. Exponential: Slow start, then rapid increase
+        3. Step: Fixed periods of different lambdas
+        4. Cosine: Smooth transition with cosine annealing
         """
         if not self.dynamic_lambda:
             return self.msm_weight
         
-        # Cosine annealing schedule
-        progress = epoch / total_epochs
-        return 0.1 + 0.4 * (1 + math.cos(math.pi * progress)) / 2
+        if total_epochs is None or total_epochs == 0:
+            total_epochs = 100  # Default fallback
+            
+        progress = min(epoch / total_epochs, 1.0)  # Clamp to [0, 1]
+        target_lambda = self.msm_weight
+        
+        # STRATEGY 1: Linear warmup (recommended for TS2Vec-MSM)
+        # Start with pure contrastive (λ=0), linearly increase to target
+        warmup_epochs = int(0.3 * total_epochs)  # 30% of training for warmup
+        
+        if epoch < warmup_epochs:
+            # Linear warmup from 0 to target_lambda
+            current_lambda = target_lambda * (epoch / warmup_epochs)
+        else:
+            # Stay at target lambda
+            current_lambda = target_lambda
+            
+        # STRATEGY 2: Alternative - Exponential warmup (uncomment to use)
+        # current_lambda = target_lambda * (1 - math.exp(-3 * progress))
+        
+        # STRATEGY 3: Alternative - Step schedule (uncomment to use)
+        # if progress < 0.2:
+        #     current_lambda = 0.0          # Pure contrastive for first 20%
+        # elif progress < 0.5:
+        #     current_lambda = target_lambda * 0.3   # Light MSM for next 30%
+        # else:
+        #     current_lambda = target_lambda          # Full MSM for last 50%
+        
+        return current_lambda
     
     def _generate_msm_mask(self, batch_size, seq_len):
         """
@@ -176,6 +207,11 @@ class TS2VecMSM:
                 
                 # Get current λ for this epoch
                 current_lambda = self._get_dynamic_lambda(self.n_epochs, n_epochs or 100)
+                
+                # Log lambda changes (only at the beginning of each epoch)
+                if n_epoch_iters == 0 and self.dynamic_lambda and verbose:
+                    print(f"Epoch {self.n_epochs + 1}: λ = {current_lambda:.4f}")
+                
                 
                 optimizer.zero_grad()
                 

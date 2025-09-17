@@ -15,6 +15,7 @@ if __name__ == '__main__':
     parser.add_argument('run_name', help='The folder name used to save model, output and evaluation metrics')
     parser.add_argument('--loader', type=str, default='UCR', help='The data loader')
     parser.add_argument('--msm-weight', type=float, default=0.5, help='Weight for MSM loss (λ)')
+    parser.add_argument('--dynamic-lambda', action='store_true', help='Use dynamic lambda scheduling during training')
     parser.add_argument('--repr-dims', type=int, default=320, help='The representation dimension')
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
     parser.add_argument('--epochs', type=int, default=20, help='Number of training epochs (for epoch-based training)')
@@ -97,7 +98,10 @@ if __name__ == '__main__':
         model_type = "baseline_ts2vec"
         
     else:
-        print(f"🚂 Using TS2Vec-MSM (λ={args.msm_weight} - hybrid learning)")
+        lambda_info = f"λ={args.msm_weight}"
+        if args.dynamic_lambda:
+            lambda_info += " (dynamic)"
+        print(f"🚂 Using TS2Vec-MSM ({lambda_info} - hybrid learning)")
         model = TS2VecMSM(
             input_dims=input_dims,
             output_dims=args.repr_dims,
@@ -108,7 +112,7 @@ if __name__ == '__main__':
             msm_weight=args.msm_weight,
             msm_mask_rate=0.15,
             msm_decoder_depth=3,
-            dynamic_lambda=False
+            dynamic_lambda=args.dynamic_lambda
         )
         model_type = "ts2vec_msm"
     
