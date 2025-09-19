@@ -69,6 +69,10 @@ class TS2VecMSM:
             depth=depth
         ).to(self.device)
         
+        # FIXED: Add SWA (Stochastic Weight Averaging) like original TS2Vec
+        self.net = torch.optim.swa_utils.AveragedModel(self._net)
+        self.net.update_parameters(self._net)
+        
         # MSM decoder (generative)
         self._msm_decoder = MSMDecoder(
             encoder_dims=output_dims,    # Takes encoder output (e.g., 320)
@@ -278,6 +282,9 @@ class TS2VecMSM:
                       f"(contrastive={cum_contrastive_loss:.6f}, "
                       f"msm={cum_msm_loss:.6f}, λ={current_lambda:.3f})")
             
+            # FIXED: Update SWA (Stochastic Weight Averaging) after each epoch
+            self.net.update_parameters(self._net)
+            
             self.n_epochs += 1
             
             if self.after_epoch_callback is not None:
@@ -287,7 +294,8 @@ class TS2VecMSM:
     
     def _eval_with_pooling(self, x, mask=None, slicing=None, encoding_window=None):
         """Helper method for encoding with pooling (same as original TS2Vec)"""
-        out = self._net(x.to(self.device, non_blocking=True), mask)
+        # FIXED: Use SWA-averaged network for evaluation
+        out = self.net(x.to(self.device, non_blocking=True), mask)
         if encoding_window == 'full_series':
             if slicing is not None:
                 out = out[:, slicing]
