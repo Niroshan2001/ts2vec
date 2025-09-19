@@ -25,7 +25,6 @@ if __name__ == '__main__':
     parser.add_argument('--max-train-length', type=int, default=3000, help='Maximum training sequence length (use None for full sequences)')
     parser.add_argument('--use-epochs', action='store_true', help='Use epoch-based training instead of TS2Vec-style iterations')
     parser.add_argument('--eval', action='store_true', help='Whether to perform evaluation after training')
-    parser.add_argument('--eval', action='store_true', help='Whether to perform evaluation after training')
     
     args = parser.parse_args()
     
