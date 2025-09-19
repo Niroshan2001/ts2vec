@@ -18,6 +18,7 @@ if __name__ == '__main__':
     parser.add_argument('--dynamic-lambda', action='store_true', help='Use dynamic lambda scheduling during training')
     parser.add_argument('--repr-dims', type=int, default=320, help='The representation dimension')
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
+    parser.add_argument('--max_threads', type=int, default=None, help='The maximum allowed number of threads used by this process')
     parser.add_argument('--epochs', type=int, default=20, help='Number of training epochs (for epoch-based training)')
     parser.add_argument('--batch-size', type=int, default=8, help='Batch size')
     parser.add_argument('--max-train-length', type=int, default=3000, help='Maximum training sequence length (use None for full sequences)')
@@ -40,17 +41,12 @@ if __name__ == '__main__':
         print("Training approach: TS2Vec-style iterations (200/600 based on dataset size)")
     else:
         print(f"Training approach: Epoch-based ({args.epochs} epochs)")
-    
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+    # Initialize device and random seeds properly using init_dl_program
+    from utils import init_dl_program
+    device = init_dl_program(args.gpu, seed=args.seed, max_threads=args.max_threads, deterministic=True)
     print(f"Device: {device}")
     print(f"Max train length: {args.max_train_length}")
-    
-    if args.seed is not None:
-        np.random.seed(args.seed)
-        torch.manual_seed(args.seed)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed(args.seed)
-            torch.cuda.manual_seed_all(args.seed)
     
     print("Loading UCR data... ", end="")
     
