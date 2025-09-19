@@ -14,6 +14,7 @@ if __name__ == '__main__':
     parser.add_argument('dataset', help='The UCR dataset name')
     parser.add_argument('run_name', help='The folder name used to save model, output and evaluation metrics')
     parser.add_argument('--loader', type=str, default='UCR', help='The data loader')
+    parser.add_argument('--gpu', type=int, default=0, help='The gpu no. used for training and inference (defaults to 0)')
     parser.add_argument('--msm-weight', type=float, default=0.5, help='Weight for MSM loss (λ)')
     parser.add_argument('--dynamic-lambda', action='store_true', help='Use dynamic lambda scheduling during training')
     parser.add_argument('--repr-dims', type=int, default=320, help='The representation dimension')
@@ -23,6 +24,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch-size', type=int, default=8, help='Batch size')
     parser.add_argument('--max-train-length', type=int, default=3000, help='Maximum training sequence length (use None for full sequences)')
     parser.add_argument('--use-epochs', action='store_true', help='Use epoch-based training instead of TS2Vec-style iterations')
+    parser.add_argument('--eval', action='store_true', help='Whether to perform evaluation after training')
     parser.add_argument('--eval', action='store_true', help='Whether to perform evaluation after training')
     
     args = parser.parse_args()
