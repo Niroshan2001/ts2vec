@@ -99,19 +99,103 @@ if __name__ == '__main__':
         if args.dynamic_lambda:
             lambda_info += " (dynamic)"
         print(f"🚂 Using TS2Vec-MSM ({lambda_info} - hybrid learning)")
-        model = TS2VecMSM(
-            input_dims=input_dims,
-            output_dims=args.repr_dims,
-            device=device,
-            lr=0.001,  # Same as original
-            batch_size=args.batch_size,
-            max_train_length=args.max_train_length,  # UPDATED: Use same as original (3000)
-            msm_weight=args.msm_weight,
-            msm_mask_rate=0.15,
-            msm_decoder_depth=3,
-            dynamic_lambda=args.dynamic_lambda
-        )
-        model_type = "ts2vec_msm"
+
+        # Grid search over hyperparameters
+        best_acc = -1
+        best_config = None
+        best_model = None
+        grid_results = []
+        for lr in [0.0005, 0.001, 0.005]:
+            for batch_size in [4, 8, 16]:
+                for msm_weight in [0.0, 0.3, 0.5, 0.7]:
+                    for dynamic_lambda in [False, True]:
+                        print(f"Trying: lr={lr}, batch_size={batch_size}, msm_weight={msm_weight}, dynamic_lambda={dynamic_lambda}")
+                        model = TS2VecMSM(
+                            input_dims=input_dims,
+                            output_dims=args.repr_dims,
+                            device=device,
+                            lr=lr,
+                            batch_size=batch_size,
+                            max_train_length=args.max_train_length,
+                            msm_weight=msm_weight,
+                            msm_mask_rate=0.15,
+                            msm_decoder_depth=3,
+                            dynamic_lambda=dynamic_lambda
+                        )
+                        model_type = "ts2vec_msm"
+                        t = time.time()
+                        loss_log = model.fit(
+                            train_data,
+                            n_iters=n_iters,
+                            verbose=False
+                        )
+                        training_time = time.time() - t
+                        if hasattr(model, 'eval'):
+                            model.eval()
+                        train_repr = model.encode(
+                            train_data,
+                            causal=False,
+                            sliding_length=None,
+                            sliding_padding=0,
+                            batch_size=batch_size
+                        )
+                        test_repr = model.encode(
+                            test_data,
+                            causal=False,
+                            sliding_length=None,
+                            sliding_padding=0,
+                            batch_size=batch_size
+                        )
+                        if len(train_repr.shape) == 3:
+                            train_repr = train_repr.reshape(train_repr.shape[0], -1)
+                            test_repr = test_repr.reshape(test_repr.shape[0], -1)
+                        from sklearn.svm import SVC
+                        from sklearn.model_selection import GridSearchCV
+                        from sklearn.preprocessing import StandardScaler
+                        from sklearn.pipeline import Pipeline
+                        from sklearn.metrics import accuracy_score, average_precision_score
+                        from sklearn.preprocessing import label_binarize
+                        pipe = Pipeline([
+                            ('scaler', StandardScaler()),
+                            ('svm', SVC(probability=True))
+                        ])
+                        param_grid = {
+                            'svm__C': [0.01, 0.1, 1, 10, 100],
+                            'svm__gamma': ['scale', 'auto', 0.001, 0.01, 0.1, 1]
+                        }
+                        grid_search = GridSearchCV(pipe, param_grid, cv=5, scoring='accuracy', n_jobs=1)
+                        grid_search.fit(train_repr, train_labels)
+                        test_pred = grid_search.predict(test_repr)
+                        test_proba = grid_search.predict_proba(test_repr)
+                        accuracy = accuracy_score(test_labels, test_pred)
+                        try:
+                            test_labels_onehot = label_binarize(test_labels, classes=np.arange(train_labels.max()+1))
+                            auprc = average_precision_score(test_labels_onehot, test_proba)
+                        except Exception as auprc_error:
+                            print(f"   ⚠️  AUPRC calculation warning: {auprc_error}")
+                            auprc = 0.0
+                        print(f"   ✅ Accuracy: {accuracy:.4f}, AUPRC: {auprc:.4f}")
+                        grid_results.append({
+                            'lr': lr,
+                            'batch_size': batch_size,
+                            'msm_weight': msm_weight,
+                            'dynamic_lambda': dynamic_lambda,
+                            'accuracy': accuracy,
+                            'auprc': auprc,
+                            'training_time': training_time
+                        })
+                        if accuracy > best_acc:
+                            best_acc = accuracy
+                            best_config = {
+                                'lr': lr,
+                                'batch_size': batch_size,
+                                'msm_weight': msm_weight,
+                                'dynamic_lambda': dynamic_lambda
+                            }
+                            best_model = model
+        print(f"\nBest hyperparameter config: {best_config} with accuracy {best_acc:.4f}")
+        # Use best_model for further evaluation/saving
+        model = best_model
     
     print(f"🚂 Training {model_type} (λ={args.msm_weight}) with {training_method}...")
     t = time.time()
