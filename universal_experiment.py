@@ -117,6 +117,12 @@ def train_and_evaluate_universal(dataset_name, config, config_name):
         loss_log = model.fit(train_data, n_iters=n_iters, verbose=False)
         training_time = time.time() - start_time
         
+        # Set model to evaluation mode
+        if hasattr(model, 'eval'):
+            model.eval()
+        elif hasattr(model, 'net') and hasattr(model.net, 'eval'):
+            model.net.eval()
+        
         # Evaluation
         eval_start = time.time()
         train_repr = model.encode(train_data, encoding_window='full_series')
