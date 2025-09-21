@@ -103,36 +103,54 @@ if __name__ == '__main__':
         if args.dynamic_lambda:
             lambda_info += " (dynamic)"
         print(f"🚂 Using TS2Vec-MSM ({lambda_info} - hybrid learning)")
-        # ADVANCED MSM CONFIGURATION FOR BETTER ACCURACY
-        model = TS2VecMSM(
-            input_dims=input_dims,
-            output_dims=args.repr_dims,
-            device=device,
-            lr=0.0005,  # Slower learning for better convergence
-            batch_size=max(4, args.batch_size // 2),  # Smaller batch for more gradient updates
-            max_train_length=None,  # Use full sequences for better context
-            msm_weight=args.msm_weight,
-            msm_mask_rate=0.25,  # Higher masking for stronger regularization
-            msm_decoder_depth=4,  # Deeper decoder for better reconstruction
-            dynamic_lambda=True,  # Always use dynamic scheduling
-            # Additional improvements:
-            use_swa=True,  # Stochastic Weight Averaging
-            temperature=0.07,  # Lower temperature for sharper contrastive learning
-            dropout=0.2,  # Add dropout for regularization
-            weight_decay=1e-4  # L2 regularization
-        )
+        if args.advanced_msm:
+            # ADVANCED MSM CONFIGURATION FOR BETTER ACCURACY
+            print("🎯 Using Advanced MSM Configuration:")
+            print("   - Slower learning rate (0.0005)")
+            print("   - Higher masking rate (25%)")
+            print("   - Deeper decoder (4 layers)")
+            print("   - Full sequence length")
+            print("   - Dynamic lambda enabled")
+            
+            model = TS2VecMSM(
+                input_dims=input_dims,
+                output_dims=args.repr_dims,
+                device=device,
+                lr=0.0005,  # Slower learning for better convergence
+                batch_size=max(4, args.batch_size // 2),  # Smaller batch for more gradient updates
+                max_train_length=None,  # Use full sequences for better context
+                msm_weight=args.msm_weight,
+                msm_mask_rate=0.25,  # Higher masking for stronger regularization
+                msm_decoder_depth=4,  # Deeper decoder for better reconstruction
+                dynamic_lambda=True  # Always use dynamic scheduling
+            )
+        else:
+            # STANDARD MSM CONFIGURATION
+            model = TS2VecMSM(
+                input_dims=input_dims,
+                output_dims=args.repr_dims,
+                device=device,
+                lr=0.001,  # Same as original
+                batch_size=args.batch_size,
+                max_train_length=args.max_train_length,  # UPDATED: Use same as original (3000)
+                msm_weight=args.msm_weight,
+                msm_mask_rate=0.15,
+                msm_decoder_depth=3,
+                dynamic_lambda=args.dynamic_lambda
+            )
         model_type = "ts2vec_msm"
     
     print(f"🚂 Training {model_type} (λ={args.msm_weight}) with {training_method}...")
     t = time.time()
     
-    # MULTI-STAGE TRAINING FOR BETTER PERFORMANCE
-    if model_type == "ts2vec_msm" and args.msm_weight > 0:
+    # MULTI-STAGE TRAINING FOR BETTER PERFORMANCE (only if flag is set)
+    if args.multi_stage and model_type == "ts2vec_msm" and args.msm_weight > 0:
         print("🎯 Using Multi-Stage Training:")
         
         # Stage 1: Pure contrastive pre-training (25% of iterations)
         print("   Stage 1: Contrastive pre-training...")
         stage1_iters = n_iters // 4
+        original_msm_weight = model.msm_weight
         model.msm_weight = 0.0  # Temporarily disable MSM
         loss_log_stage1 = model.fit(
             train_data,
@@ -143,7 +161,7 @@ if __name__ == '__main__':
         # Stage 2: Gradual MSM introduction (25% of iterations)
         print("   Stage 2: Gradual MSM introduction...")
         stage2_iters = n_iters // 4
-        model.msm_weight = args.msm_weight * 0.5  # Half MSM weight
+        model.msm_weight = original_msm_weight * 0.5  # Half MSM weight
         loss_log_stage2 = model.fit(
             train_data,
             n_iters=stage2_iters,
@@ -153,7 +171,7 @@ if __name__ == '__main__':
         # Stage 3: Full MSM training (50% of iterations)
         print("   Stage 3: Full MSM training...")
         stage3_iters = n_iters - stage1_iters - stage2_iters
-        model.msm_weight = args.msm_weight  # Full MSM weight
+        model.msm_weight = original_msm_weight  # Full MSM weight
         loss_log_stage3 = model.fit(
             train_data,
             n_iters=stage3_iters,
