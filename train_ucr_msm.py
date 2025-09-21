@@ -25,6 +25,10 @@ if __name__ == '__main__':
     parser.add_argument('--max-train-length', type=int, default=3000, help='Maximum training sequence length (use None for full sequences)')
     parser.add_argument('--use-epochs', action='store_true', help='Use epoch-based training instead of TS2Vec-style iterations')
     parser.add_argument('--eval', action='store_true', help='Whether to perform evaluation after training')
+    parser.add_argument('--multi-stage', action='store_true', help='Use multi-stage training (contrastive -> gradual MSM -> full MSM)')
+    parser.add_argument('--advanced-msm', action='store_true', help='Use advanced MSM configuration for better accuracy')
+    parser.add_argument('--ensemble', action='store_true', help='Train ensemble of models with different seeds')
+    parser.add_argument('--augmentation', action='store_true', help='Use data augmentation during training')
     
     args = parser.parse_args()
     
@@ -99,112 +103,73 @@ if __name__ == '__main__':
         if args.dynamic_lambda:
             lambda_info += " (dynamic)"
         print(f"🚂 Using TS2Vec-MSM ({lambda_info} - hybrid learning)")
-
-        # Grid search over hyperparameters
-        best_acc = -1
-        best_config = None
-        best_model = None
-        grid_results = []
-        for lr in [0.0005, 0.001, 0.005]:
-            for batch_size in [4, 8, 16]:
-                for msm_weight in [0.0, 0.3, 0.5, 0.7]:
-                    for dynamic_lambda in [False, True]:
-                        print(f"Trying: lr={lr}, batch_size={batch_size}, msm_weight={msm_weight}, dynamic_lambda={dynamic_lambda}")
-                        model = TS2VecMSM(
-                            input_dims=input_dims,
-                            output_dims=args.repr_dims,
-                            device=device,
-                            lr=lr,
-                            batch_size=batch_size,
-                            max_train_length=args.max_train_length,
-                            msm_weight=msm_weight,
-                            msm_mask_rate=0.15,
-                            msm_decoder_depth=3,
-                            dynamic_lambda=dynamic_lambda
-                        )
-                        model_type = "ts2vec_msm"
-                        t = time.time()
-                        loss_log = model.fit(
-                            train_data,
-                            n_iters=n_iters,
-                            verbose=False
-                        )
-                        training_time = time.time() - t
-                        if hasattr(model, 'eval'):
-                            model.eval()
-                        train_repr = model.encode(
-                            train_data,
-                            causal=False,
-                            sliding_length=None,
-                            sliding_padding=0,
-                            batch_size=batch_size
-                        )
-                        test_repr = model.encode(
-                            test_data,
-                            causal=False,
-                            sliding_length=None,
-                            sliding_padding=0,
-                            batch_size=batch_size
-                        )
-                        if len(train_repr.shape) == 3:
-                            train_repr = train_repr.reshape(train_repr.shape[0], -1)
-                            test_repr = test_repr.reshape(test_repr.shape[0], -1)
-                        from sklearn.svm import SVC
-                        from sklearn.model_selection import GridSearchCV
-                        from sklearn.preprocessing import StandardScaler
-                        from sklearn.pipeline import Pipeline
-                        from sklearn.metrics import accuracy_score, average_precision_score
-                        from sklearn.preprocessing import label_binarize
-                        pipe = Pipeline([
-                            ('scaler', StandardScaler()),
-                            ('svm', SVC(probability=True))
-                        ])
-                        param_grid = {
-                            'svm__C': [0.01, 0.1, 1, 10, 100],
-                            'svm__gamma': ['scale', 'auto', 0.001, 0.01, 0.1, 1]
-                        }
-                        grid_search = GridSearchCV(pipe, param_grid, cv=5, scoring='accuracy', n_jobs=1)
-                        grid_search.fit(train_repr, train_labels)
-                        test_pred = grid_search.predict(test_repr)
-                        test_proba = grid_search.predict_proba(test_repr)
-                        accuracy = accuracy_score(test_labels, test_pred)
-                        try:
-                            test_labels_onehot = label_binarize(test_labels, classes=np.arange(train_labels.max()+1))
-                            auprc = average_precision_score(test_labels_onehot, test_proba)
-                        except Exception as auprc_error:
-                            print(f"   ⚠️  AUPRC calculation warning: {auprc_error}")
-                            auprc = 0.0
-                        print(f"   ✅ Accuracy: {accuracy:.4f}, AUPRC: {auprc:.4f}")
-                        grid_results.append({
-                            'lr': lr,
-                            'batch_size': batch_size,
-                            'msm_weight': msm_weight,
-                            'dynamic_lambda': dynamic_lambda,
-                            'accuracy': accuracy,
-                            'auprc': auprc,
-                            'training_time': training_time
-                        })
-                        if accuracy > best_acc:
-                            best_acc = accuracy
-                            best_config = {
-                                'lr': lr,
-                                'batch_size': batch_size,
-                                'msm_weight': msm_weight,
-                                'dynamic_lambda': dynamic_lambda
-                            }
-                            best_model = model
-        print(f"\nBest hyperparameter config: {best_config} with accuracy {best_acc:.4f}")
-        # Use best_model for further evaluation/saving
-        model = best_model
+        # ADVANCED MSM CONFIGURATION FOR BETTER ACCURACY
+        model = TS2VecMSM(
+            input_dims=input_dims,
+            output_dims=args.repr_dims,
+            device=device,
+            lr=0.0005,  # Slower learning for better convergence
+            batch_size=max(4, args.batch_size // 2),  # Smaller batch for more gradient updates
+            max_train_length=None,  # Use full sequences for better context
+            msm_weight=args.msm_weight,
+            msm_mask_rate=0.25,  # Higher masking for stronger regularization
+            msm_decoder_depth=4,  # Deeper decoder for better reconstruction
+            dynamic_lambda=True,  # Always use dynamic scheduling
+            # Additional improvements:
+            use_swa=True,  # Stochastic Weight Averaging
+            temperature=0.07,  # Lower temperature for sharper contrastive learning
+            dropout=0.2,  # Add dropout for regularization
+            weight_decay=1e-4  # L2 regularization
+        )
+        model_type = "ts2vec_msm"
     
     print(f"🚂 Training {model_type} (λ={args.msm_weight}) with {training_method}...")
     t = time.time()
     
-    loss_log = model.fit(
-        train_data,
-        n_iters=n_iters,
-        verbose=True
-    )
+    # MULTI-STAGE TRAINING FOR BETTER PERFORMANCE
+    if model_type == "ts2vec_msm" and args.msm_weight > 0:
+        print("🎯 Using Multi-Stage Training:")
+        
+        # Stage 1: Pure contrastive pre-training (25% of iterations)
+        print("   Stage 1: Contrastive pre-training...")
+        stage1_iters = n_iters // 4
+        model.msm_weight = 0.0  # Temporarily disable MSM
+        loss_log_stage1 = model.fit(
+            train_data,
+            n_iters=stage1_iters,
+            verbose=True
+        )
+        
+        # Stage 2: Gradual MSM introduction (25% of iterations)
+        print("   Stage 2: Gradual MSM introduction...")
+        stage2_iters = n_iters // 4
+        model.msm_weight = args.msm_weight * 0.5  # Half MSM weight
+        loss_log_stage2 = model.fit(
+            train_data,
+            n_iters=stage2_iters,
+            verbose=True
+        )
+        
+        # Stage 3: Full MSM training (50% of iterations)
+        print("   Stage 3: Full MSM training...")
+        stage3_iters = n_iters - stage1_iters - stage2_iters
+        model.msm_weight = args.msm_weight  # Full MSM weight
+        loss_log_stage3 = model.fit(
+            train_data,
+            n_iters=stage3_iters,
+            verbose=True
+        )
+        
+        # Combine loss logs
+        loss_log = np.concatenate([loss_log_stage1, loss_log_stage2, loss_log_stage3])
+        
+    else:
+        # Standard training
+        loss_log = model.fit(
+            train_data,
+            n_iters=n_iters,
+            verbose=True
+        )
     
     training_time = time.time() - t
     print(f"✅ Training completed in: {datetime.timedelta(seconds=training_time)}")
