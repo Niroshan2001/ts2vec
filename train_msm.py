@@ -31,9 +31,9 @@ if __name__ == '__main__':
     parser.add_argument('--irregular', type=float, default=0, help='The ratio of missing observations (defaults to 0)')
     
     # MSM-specific arguments
-    parser.add_argument('--msm-weight', type=float, default=0.5, help='Weight for MSM loss (λ parameter, 0=contrastive only, 1=MSM only)')
-    parser.add_argument('--msm-mask-rate', type=float, default=0.15, help='Percentage of timestamps to mask for MSM')
-    parser.add_argument('--msm-decoder-depth', type=int, default=3, help='Number of layers in the MSM decoder')
+    parser.add_argument('--msm-weight', type=float, default=0.1, help='Weight for MSM loss (λ parameter, 0=contrastive only, 1=MSM only)')
+    parser.add_argument('--msm-mask-rate', type=float, default=0.25, help='Percentage of timestamps to mask for MSM')
+    parser.add_argument('--msm-decoder-depth', type=int, default=4, help='Number of layers in the MSM decoder')
     parser.add_argument('--dynamic-lambda', action='store_true', help='Whether to use dynamic λ scheduling during training')
     
     args = parser.parse_args()
