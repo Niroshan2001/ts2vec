@@ -145,7 +145,7 @@ if __name__ == '__main__':
         # MSM reconstruction helps learn temporal patterns for prediction
         loss_log = model.fit(
             training_data,
-            n_epochs=10,  # More epochs for forecasting (temporal learning)
+            n_epochs=600, 
             n_iters=None,
             verbose=True
         )
