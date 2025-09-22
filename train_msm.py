@@ -138,10 +138,13 @@ if __name__ == '__main__':
     # Training
     print("Training...")
     t = time.time()
+    
+    # Use same training length as baseline for fair comparison
+    # Baseline used 4 epochs, let's match that
     loss_log = model.fit(
         training_data,
-        n_epochs=args.epochs,
-        n_iters=args.iters,
+        n_epochs=4,  # Match baseline training
+        n_iters=None,
         verbose=True
     )
     training_time = time.time() - t
