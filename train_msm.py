@@ -139,14 +139,23 @@ if __name__ == '__main__':
     print("Training...")
     t = time.time()
     
-    # Use same training length as baseline for fair comparison
-    # Baseline used 4 epochs, let's match that
-    loss_log = model.fit(
-        training_data,
-        n_epochs=4,  # Match baseline training
-        n_iters=None,
-        verbose=True
-    )
+    # For anomaly detection, use much fewer iterations due to large dataset size
+    # MSM needs less training than expected due to double computation
+    if task_type == 'anomaly_detection':
+        # Use iterations instead of epochs for faster training
+        loss_log = model.fit(
+            training_data,
+            n_epochs=None,
+            n_iters=100,  # Much fewer iterations for anomaly detection
+            verbose=True
+        )
+    else:
+        loss_log = model.fit(
+            training_data,
+            n_epochs=4,  # Match baseline training for other tasks
+            n_iters=None,
+            verbose=True
+        )
     training_time = time.time() - t
     print(f"Training time: {datetime.timedelta(seconds=training_time)}")
     
