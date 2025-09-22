@@ -30,10 +30,10 @@ if __name__ == '__main__':
     parser.add_argument('--eval', action='store_true', help='Whether to perform evaluation after training')
     parser.add_argument('--irregular', type=float, default=0, help='The ratio of missing observations (defaults to 0)')
     
-    # MSM-specific arguments
-    parser.add_argument('--msm-weight', type=float, default=0.1, help='Weight for MSM loss (λ parameter, 0=contrastive only, 1=MSM only)')
-    parser.add_argument('--msm-mask-rate', type=float, default=0.25, help='Percentage of timestamps to mask for MSM')
-    parser.add_argument('--msm-decoder-depth', type=int, default=4, help='Number of layers in the MSM decoder')
+    # MSM-specific arguments (optimized for forecasting)
+    parser.add_argument('--msm-weight', type=float, default=0.2, help='Weight for MSM loss (λ parameter, 0=contrastive only, 1=MSM only)')
+    parser.add_argument('--msm-mask-rate', type=float, default=0.3, help='Percentage of timestamps to mask for MSM')
+    parser.add_argument('--msm-decoder-depth', type=int, default=3, help='Number of layers in the MSM decoder')
     parser.add_argument('--dynamic-lambda', action='store_true', help='Whether to use dynamic λ scheduling during training')
     
     args = parser.parse_args()
@@ -139,21 +139,29 @@ if __name__ == '__main__':
     print("Training...")
     t = time.time()
     
-    # For anomaly detection, use much fewer iterations due to large dataset size
-    # MSM needs less training than expected due to double computation
-    if task_type == 'anomaly_detection':
-        # Use iterations instead of epochs for faster training
+    # Optimized training based on task type
+    if task_type == 'forecasting':
+        # For forecasting, use more epochs but fewer iterations per epoch
+        # MSM reconstruction helps learn temporal patterns for prediction
+        loss_log = model.fit(
+            training_data,
+            n_epochs=10,  # More epochs for forecasting (temporal learning)
+            n_iters=None,
+            verbose=True
+        )
+    elif task_type == 'anomaly_detection':
+        # For anomaly detection, use much fewer iterations due to large dataset size
         loss_log = model.fit(
             training_data,
             n_epochs=None,
             n_iters=100,  # Much fewer iterations for anomaly detection
             verbose=True
         )
-    else:
+    else:  # classification
         loss_log = model.fit(
             training_data,
-            n_epochs=4,  # Match baseline training for other tasks
-            n_iters=None,
+            n_epochs=None,
+            n_iters=200,  # Standard iterations for classification
             verbose=True
         )
     training_time = time.time() - t
