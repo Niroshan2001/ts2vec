@@ -2,12 +2,60 @@ import numpy as np
 import time
 from . import _eval_protocols as eval_protocols
 
-def generate_pred_samples(features, data, pred_len, drop=0):
+def generate_time_features(length, freq='H'):
+    """Generate sinusoidal time features for explicit temporal modeling
+    
+    Args:
+        length (int): Length of the time series
+        freq (str): Frequency of the data ('H' for hourly)
+        
+    Returns:
+        np.ndarray: Time features of shape [length, 6] with sin/cos components
+                   for daily, weekly, and monthly cycles
+    """
+    t = np.arange(length)
+    features = []
+    
+    # Daily cycle (24 hours)
+    features.append(np.sin(2 * np.pi * t / 24))
+    features.append(np.cos(2 * np.pi * t / 24))
+    
+    # Weekly cycle (7 days = 168 hours)
+    features.append(np.sin(2 * np.pi * t / 168))
+    features.append(np.cos(2 * np.pi * t / 168))
+    
+    # Monthly cycle (30 days = 720 hours)
+    features.append(np.sin(2 * np.pi * t / 720))
+    features.append(np.cos(2 * np.pi * t / 720))
+    
+    return np.stack(features, axis=1)  # Shape: [length, 6]
+
+def generate_pred_samples(features, data, pred_len, drop=0, add_time_features=True):
+    """Generate prediction samples with optional time features
+    
+    Args:
+        features: TS2Vec embeddings
+        data: Time series data
+        pred_len: Prediction length
+        drop: Number of samples to drop from beginning
+        add_time_features: Whether to add sinusoidal time features
+        
+    Returns:
+        Enhanced features and labels for forecasting
+    """
     n = data.shape[1]
     features = features[:, :-pred_len]
     labels = np.stack([ data[:, i:1+n+i-pred_len] for i in range(pred_len)], axis=2)[:, 1:]
     features = features[:, drop:]
     labels = labels[:, drop:]
+    
+    # Add time features to TS2Vec embeddings
+    if add_time_features:
+        time_feats = generate_time_features(features.shape[1])
+        # Repeat time features for each batch sample
+        time_feats = np.tile(time_feats[None, :, :], (features.shape[0], 1, 1))
+        features = np.concatenate([features, time_feats], axis=-1)
+    
     return features.reshape(-1, features.shape[-1]), \
             labels.reshape(-1, labels.shape[2]*labels.shape[3])
 
@@ -43,12 +91,14 @@ def eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, 
     lr_infer_time = {}
     out_log = {}
     for pred_len in pred_lens:
-        train_features, train_labels = generate_pred_samples(train_repr, train_data, pred_len, drop=padding)
-        valid_features, valid_labels = generate_pred_samples(valid_repr, valid_data, pred_len)
-        test_features, test_labels = generate_pred_samples(test_repr, test_data, pred_len)
+        # Generate features WITH explicit time features for better temporal modeling
+        train_features, train_labels = generate_pred_samples(train_repr, train_data, pred_len, drop=padding, add_time_features=True)
+        valid_features, valid_labels = generate_pred_samples(valid_repr, valid_data, pred_len, add_time_features=True)
+        test_features, test_labels = generate_pred_samples(test_repr, test_data, pred_len, add_time_features=True)
         
         t = time.time()
-        lr = eval_protocols.fit_ridge(train_features, train_labels, valid_features, valid_labels)
+        # Use XGBoost for better non-linear modeling capabilities
+        lr = eval_protocols.fit_xgboost(train_features, train_labels, valid_features, valid_labels)
         lr_train_time[pred_len] = time.time() - t
         
         t = time.time()
