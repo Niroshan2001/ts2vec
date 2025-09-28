@@ -2,6 +2,17 @@ import numpy as np
 import time
 from . import _eval_protocols as eval_protocols
 
+# Import hybrid model for ensemble
+try:
+    import sys
+    import os
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from boosted_hybrid_model import get_hybrid_predictions
+    HAS_HYBRID = True
+except ImportError:
+    print("Boosted Hybrid Model not available, using TS2Vec only")
+    HAS_HYBRID = False
+
 def generate_time_features(length, freq='H'):
     """Generate simple time features - just daily cycle to avoid overfitting
     
@@ -51,6 +62,34 @@ def generate_pred_samples(features, data, pred_len, drop=0, add_time_features=Tr
     return features.reshape(-1, features.shape[-1]), \
             labels.reshape(-1, labels.shape[2]*labels.shape[3])
 
+
+def ensemble_predictions(pred1, pred2, weights=None, method='weighted'):
+    """
+    Combine predictions from two models using different ensemble strategies.
+    
+    Args:
+        pred1: First model predictions (e.g., original TS2Vec)
+        pred2: Second model predictions (e.g., TS2Vec + time features)
+        weights: Ensemble weights [w1, w2]. If None, uses equal weights
+        method: 'weighted', 'adaptive', or 'median'
+        
+    Returns:
+        Combined predictions that leverage strengths of both models
+    """
+    if weights is None:
+        weights = [0.5, 0.5]
+    
+    if method == 'weighted':
+        return weights[0] * pred1 + weights[1] * pred2
+    elif method == 'median':
+        return np.median(np.stack([pred1, pred2], axis=0), axis=0)
+    elif method == 'adaptive':
+        # Adaptive ensemble: favor original TS2Vec for short horizons,
+        # blend more for longer horizons where time features might help
+        return weights[0] * pred1 + weights[1] * pred2
+    else:
+        raise ValueError(f"Unknown ensemble method: {method}")
+
 def cal_metrics(pred, target):
     return {
         'MSE': ((pred - target) ** 2).mean(),
@@ -78,23 +117,86 @@ def eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, 
     valid_data = data[:, valid_slice, n_covariate_cols:]
     test_data = data[:, test_slice, n_covariate_cols:]
     
+    # Get hybrid model predictions for ensemble
+    hybrid_predictions = None
+    if HAS_HYBRID:
+        try:
+            print("Generating hybrid model predictions...")
+            hybrid_predictions = get_hybrid_predictions(
+                data[:, :, n_covariate_cols:], train_slice, valid_slice, test_slice, pred_lens, scaler
+            )
+        except Exception as e:
+            print(f"Hybrid model failed: {e}")
+            hybrid_predictions = None
+    
     ours_result = {}
     lr_train_time = {}
     lr_infer_time = {}
     out_log = {}
     for pred_len in pred_lens:
-        # Generate features WITH explicit time features for better temporal modeling
-        train_features, train_labels = generate_pred_samples(train_repr, train_data, pred_len, drop=padding, add_time_features=False)
-        valid_features, valid_labels = generate_pred_samples(valid_repr, valid_data, pred_len, add_time_features=False)
-        test_features, test_labels = generate_pred_samples(test_repr, test_data, pred_len, add_time_features=False)
+        # Generate TWO sets of predictions for ensemble
+        
+        # 1. Original TS2Vec (no time features)
+        train_features_orig, train_labels = generate_pred_samples(train_repr, train_data, pred_len, drop=padding, add_time_features=False)
+        valid_features_orig, valid_labels = generate_pred_samples(valid_repr, valid_data, pred_len, add_time_features=False)
+        test_features_orig, test_labels = generate_pred_samples(test_repr, test_data, pred_len, add_time_features=False)
+        
+        # 2. TS2Vec + Time Features 
+        train_features_enh, _ = generate_pred_samples(train_repr, train_data, pred_len, drop=padding, add_time_features=True)
+        valid_features_enh, _ = generate_pred_samples(valid_repr, valid_data, pred_len, add_time_features=True)
+        test_features_enh, _ = generate_pred_samples(test_repr, test_data, pred_len, add_time_features=True)
         
         t = time.time()
-        # Use Ridge regression with time features (simpler and more stable)
-        lr = eval_protocols.fit_ridge(train_features, train_labels, valid_features, valid_labels)
+        # Train both models
+        lr_orig = eval_protocols.fit_ridge(train_features_orig, train_labels, valid_features_orig, valid_labels)
+        lr_enh = eval_protocols.fit_ridge(train_features_enh, train_labels, valid_features_enh, valid_labels)
         lr_train_time[pred_len] = time.time() - t
         
         t = time.time()
-        test_pred = lr.predict(test_features)
+        # Generate predictions from both models
+        test_pred_orig = lr_orig.predict(test_features_orig)
+        test_pred_enh = lr_enh.predict(test_features_enh)
+        
+        # Three-way ensemble: TS2Vec + TS2Vec+Time + Hybrid Model
+        if hybrid_predictions and pred_len in hybrid_predictions and hybrid_predictions[pred_len] is not None:
+            # Get hybrid predictions in the right shape
+            hybrid_pred = hybrid_predictions[pred_len]['norm']
+            
+            # Ensure shapes match
+            if hybrid_pred.shape == test_pred_orig.shape:
+                # Three-way ensemble with adaptive weights
+                if pred_len <= 48:
+                    # Short horizons: favor TS2Vec, small contribution from others
+                    w1, w2, w3 = 0.7, 0.1, 0.2  # TS2Vec, TS2Vec+Time, Hybrid
+                elif pred_len <= 168:
+                    # Medium horizons: more balanced
+                    w1, w2, w3 = 0.5, 0.2, 0.3
+                else:
+                    # Long horizons: let hybrid model contribute more
+                    w1, w2, w3 = 0.4, 0.2, 0.4
+                    
+                test_pred = w1 * test_pred_orig + w2 * test_pred_enh + w3 * hybrid_pred.reshape(-1)
+                print(f"Using 3-way ensemble for horizon {pred_len}: TS2Vec({w1}), TS2Vec+Time({w2}), Hybrid({w3})")
+            else:
+                print(f"Shape mismatch for hybrid prediction at horizon {pred_len}, falling back to 2-way ensemble")
+                # Two-way ensemble: TS2Vec + TS2Vec+Time
+                if pred_len <= 48:
+                    weights = [0.8, 0.2]
+                elif pred_len <= 168:
+                    weights = [0.6, 0.4]
+                else:
+                    weights = [0.5, 0.5]
+                test_pred = ensemble_predictions(test_pred_orig, test_pred_enh, weights=weights, method='weighted')
+        else:
+            # Two-way ensemble: TS2Vec + TS2Vec+Time (fallback)
+            if pred_len <= 48:
+                weights = [0.8, 0.2]
+            elif pred_len <= 168:
+                weights = [0.6, 0.4]  
+            else:
+                weights = [0.5, 0.5]
+            test_pred = ensemble_predictions(test_pred_orig, test_pred_enh, weights=weights, method='weighted')
+            print(f"Using 2-way ensemble for horizon {pred_len}: TS2Vec({weights[0]}), TS2Vec+Time({weights[1]})")
         lr_infer_time[pred_len] = time.time() - t
 
         ori_shape = test_data.shape[0], -1, pred_len, test_data.shape[2]
