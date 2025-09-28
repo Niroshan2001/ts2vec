@@ -168,12 +168,17 @@ def eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, 
             # Try to align shapes by truncating larger array
             min_samples = min(hybrid_pred.shape[0], test_pred_orig.shape[0])
             if min_samples > 0:
-                # Truncate both to same length and reshape
-                hybrid_aligned = hybrid_pred[:min_samples].reshape(-1)
-                ts2vec_aligned = test_pred_orig[:min_samples]
-                enhanced_aligned = test_pred_enh[:min_samples]
+                # Truncate all arrays to same sample count, keep original shapes
+                hybrid_aligned = hybrid_pred[:min_samples]  # Keep 2D: [samples, horizon]
+                ts2vec_aligned = test_pred_orig[:min_samples] # Keep 2D: [samples, horizon] 
+                enhanced_aligned = test_pred_enh[:min_samples] # Keep 2D: [samples, horizon]
                 
-                if hybrid_aligned.size == ts2vec_aligned.size:
+                # Flatten for comparison but keep shapes for ensemble
+                hybrid_flat = hybrid_aligned.reshape(-1)
+                ts2vec_flat = ts2vec_aligned.reshape(-1)
+                enhanced_flat = enhanced_aligned.reshape(-1)
+                
+                if hybrid_flat.size == ts2vec_flat.size:
                     # Three-way ensemble with adaptive weights
                     if pred_len <= 48:
                         # Short horizons: favor TS2Vec, small contribution from others
@@ -185,7 +190,11 @@ def eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, 
                         # Long horizons: let hybrid model contribute more
                         w1, w2, w3 = 0.4, 0.2, 0.4
                         
-                    test_pred = w1 * ts2vec_aligned + w2 * enhanced_aligned + w3 * hybrid_aligned
+                    # Ensemble the flattened arrays and reshape back
+                    ensemble_flat = w1 * ts2vec_flat + w2 * enhanced_flat + w3 * hybrid_flat
+                    test_pred = ensemble_flat.reshape(ts2vec_aligned.shape)
+                    test_pred = test_pred.reshape(-1)  # Final flatten for compatibility
+                    
                     print(f"Using 3-way ensemble for horizon {pred_len}: TS2Vec({w1}), TS2Vec+Time({w2}), Hybrid({w3})")
                 else:
                     print(f"Size mismatch after alignment for horizon {pred_len}, falling back to 2-way ensemble")
