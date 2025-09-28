@@ -162,8 +162,13 @@ def eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, 
             # Get hybrid predictions in the right shape
             hybrid_pred = hybrid_predictions[pred_len]['norm']
             
-            # Ensure shapes match
-            if hybrid_pred.shape == test_pred_orig.shape:
+            # Debug shape information
+            print(f"Shapes - Hybrid: {hybrid_pred.shape}, TS2Vec: {test_pred_orig.shape}")
+            
+            # Try to match shapes for ensemble
+            if hybrid_pred.size == test_pred_orig.size:
+                # Reshape hybrid to match TS2Vec predictions
+                hybrid_pred_reshaped = hybrid_pred.reshape(test_pred_orig.shape)
                 # Three-way ensemble with adaptive weights
                 if pred_len <= 48:
                     # Short horizons: favor TS2Vec, small contribution from others
@@ -175,7 +180,7 @@ def eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, 
                     # Long horizons: let hybrid model contribute more
                     w1, w2, w3 = 0.4, 0.2, 0.4
                     
-                test_pred = w1 * test_pred_orig + w2 * test_pred_enh + w3 * hybrid_pred.reshape(-1)
+                test_pred = w1 * test_pred_orig + w2 * test_pred_enh + w3 * hybrid_pred_reshaped.reshape(-1)
                 print(f"Using 3-way ensemble for horizon {pred_len}: TS2Vec({w1}), TS2Vec+Time({w2}), Hybrid({w3})")
             else:
                 print(f"Shape mismatch for hybrid prediction at horizon {pred_len}, falling back to 2-way ensemble")
