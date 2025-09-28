@@ -117,17 +117,10 @@ def eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, 
     valid_data = data[:, valid_slice, n_covariate_cols:]
     test_data = data[:, test_slice, n_covariate_cols:]
     
-    # Get hybrid model predictions for ensemble
+    # Disable hybrid model - it degrades performance
+    # Use simple 2-way ensemble: TS2Vec + TS2Vec+TimeFeatures  
     hybrid_predictions = None
-    if HAS_HYBRID:
-        try:
-            print("Generating hybrid model predictions...")
-            hybrid_predictions = get_hybrid_predictions(
-                data[:, :, n_covariate_cols:], train_slice, valid_slice, test_slice, pred_lens, scaler
-            )
-        except Exception as e:
-            print(f"Hybrid model failed: {e}")
-            hybrid_predictions = None
+    print("Using 2-way ensemble: TS2Vec + Enhanced TS2Vec")
     
     ours_result = {}
     lr_train_time = {}
