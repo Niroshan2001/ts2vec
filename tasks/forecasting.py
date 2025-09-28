@@ -84,9 +84,9 @@ def eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, 
     out_log = {}
     for pred_len in pred_lens:
         # Generate features WITH explicit time features for better temporal modeling
-        train_features, train_labels = generate_pred_samples(train_repr, train_data, pred_len, drop=padding, add_time_features=True)
-        valid_features, valid_labels = generate_pred_samples(valid_repr, valid_data, pred_len, add_time_features=True)
-        test_features, test_labels = generate_pred_samples(test_repr, test_data, pred_len, add_time_features=True)
+        train_features, train_labels = generate_pred_samples(train_repr, train_data, pred_len, drop=padding, add_time_features=False)
+        valid_features, valid_labels = generate_pred_samples(valid_repr, valid_data, pred_len, add_time_features=False)
+        test_features, test_labels = generate_pred_samples(test_repr, test_data, pred_len, add_time_features=False)
         
         t = time.time()
         # Use Ridge regression with time features (simpler and more stable)
