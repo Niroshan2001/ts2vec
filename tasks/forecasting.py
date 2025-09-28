@@ -3,32 +3,24 @@ import time
 from . import _eval_protocols as eval_protocols
 
 def generate_time_features(length, freq='H'):
-    """Generate sinusoidal time features for explicit temporal modeling
+    """Generate simple time features - just daily cycle to avoid overfitting
     
     Args:
         length (int): Length of the time series
         freq (str): Frequency of the data ('H' for hourly)
         
     Returns:
-        np.ndarray: Time features of shape [length, 6] with sin/cos components
-                   for daily, weekly, and monthly cycles
+        np.ndarray: Time features of shape [length, 2] with sin/cos components
+                   for daily cycle only
     """
     t = np.arange(length)
     features = []
     
-    # Daily cycle (24 hours)
+    # Only daily cycle (24 hours) - simpler is better for small datasets
     features.append(np.sin(2 * np.pi * t / 24))
     features.append(np.cos(2 * np.pi * t / 24))
     
-    # Weekly cycle (7 days = 168 hours)
-    features.append(np.sin(2 * np.pi * t / 168))
-    features.append(np.cos(2 * np.pi * t / 168))
-    
-    # Monthly cycle (30 days = 720 hours)
-    features.append(np.sin(2 * np.pi * t / 720))
-    features.append(np.cos(2 * np.pi * t / 720))
-    
-    return np.stack(features, axis=1)  # Shape: [length, 6]
+    return np.stack(features, axis=1)  # Shape: [length, 2]
 
 def generate_pred_samples(features, data, pred_len, drop=0, add_time_features=True):
     """Generate prediction samples with optional time features
@@ -97,8 +89,8 @@ def eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, 
         test_features, test_labels = generate_pred_samples(test_repr, test_data, pred_len, add_time_features=True)
         
         t = time.time()
-        # Use XGBoost for better non-linear modeling capabilities
-        lr = eval_protocols.fit_xgboost(train_features, train_labels, valid_features, valid_labels)
+        # Use Ridge regression with time features (simpler and more stable)
+        lr = eval_protocols.fit_ridge(train_features, train_labels, valid_features, valid_labels)
         lr_train_time[pred_len] = time.time() - t
         
         t = time.time()
