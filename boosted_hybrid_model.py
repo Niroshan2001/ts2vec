@@ -130,7 +130,13 @@ class BoostedHybridForecaster:
         
         # Create windowed dataset
         X, y = create_dataset(series, self.input_len, horizon)
-        X_test = X[test_slice.start:test_slice.stop]
+        
+        # Align with TS2Vec's padding logic (padding=200)
+        padding = 200
+        adjusted_start = max(test_slice.start, padding)
+        adjusted_stop = min(test_slice.stop, len(X))
+        
+        X_test = X[adjusted_start:adjusted_stop]
         
         if len(X_test) == 0:
             return np.array([])
