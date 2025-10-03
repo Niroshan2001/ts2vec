@@ -163,25 +163,34 @@ def eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, 
             hybrid_pred = hybrid_predictions[pred_len]['norm']
             
             # Debug shapes
-            print(f"Shapes - Hybrid: {hybrid_pred.shape}, TS2Vec: {test_pred_orig.shape}")
+            print(f"Shapes - Hybrid: {hybrid_pred.shape}, TS2Vec original: {test_pred_orig.shape}")
             
-            # Calculate expected TS2Vec shape (flattened)
-            expected_ts2vec_samples = len(test_pred_orig) // pred_len
-            expected_hybrid_samples = hybrid_pred.shape[0]
+            # TS2Vec predictions come as flattened arrays from Ridge regression
+            # We need to reshape them back to [n_samples, pred_len] for proper alignment
+            ts2vec_samples = len(test_pred_orig) // pred_len
+            enhanced_samples = len(test_pred_enh) // pred_len
+            hybrid_samples = hybrid_pred.shape[0]
+            
+            print(f"Sample counts - TS2Vec: {ts2vec_samples}, Enhanced: {enhanced_samples}, Hybrid: {hybrid_samples}")
             
             # Find minimum sample count and align
-            min_samples = min(expected_ts2vec_samples, expected_hybrid_samples)
+            min_samples = min(ts2vec_samples, enhanced_samples, hybrid_samples)
             
             if min_samples > 0:
-                # Truncate TS2Vec predictions to match sample count
-                ts2vec_truncated = test_pred_orig[:min_samples * pred_len]
-                enhanced_truncated = test_pred_enh[:min_samples * pred_len]
+                # Reshape and truncate TS2Vec predictions to [n_samples, pred_len]
+                ts2vec_reshaped = test_pred_orig.reshape(-1, pred_len)[:min_samples]
+                enhanced_reshaped = test_pred_enh.reshape(-1, pred_len)[:min_samples]
                 
-                # Truncate and flatten hybrid predictions
-                hybrid_truncated = hybrid_pred[:min_samples].reshape(-1)
+                # Truncate hybrid predictions
+                hybrid_reshaped = hybrid_pred[:min_samples]
+                
+                # Now flatten all for ensemble (all should be same size)
+                ts2vec_flat = ts2vec_reshaped.reshape(-1)
+                enhanced_flat = enhanced_reshaped.reshape(-1)
+                hybrid_flat = hybrid_reshaped.reshape(-1)
                 
                 # Verify all arrays have same size
-                if len(ts2vec_truncated) == len(enhanced_truncated) == len(hybrid_truncated):
+                if len(ts2vec_flat) == len(enhanced_flat) == len(hybrid_flat):
                     # Three-way ensemble with adaptive weights
                     if pred_len <= 48:
                         w1, w2, w3 = 0.7, 0.1, 0.2  # TS2Vec, TS2Vec+Time, Hybrid
@@ -190,11 +199,11 @@ def eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, 
                     else:
                         w1, w2, w3 = 0.4, 0.2, 0.4
                         
-                    test_pred = w1 * ts2vec_truncated + w2 * enhanced_truncated + w3 * hybrid_truncated
+                    test_pred = w1 * ts2vec_flat + w2 * enhanced_flat + w3 * hybrid_flat
                     print(f"Using 3-way ensemble for horizon {pred_len}: TS2Vec({w1}), TS2Vec+Time({w2}), Hybrid({w3})")
-                    print(f"Ensemble shapes - TS2Vec: {ts2vec_truncated.shape}, Enhanced: {enhanced_truncated.shape}, Hybrid: {hybrid_truncated.shape}")
+                    print(f"Final ensemble shapes - TS2Vec: {ts2vec_flat.shape}, Enhanced: {enhanced_flat.shape}, Hybrid: {hybrid_flat.shape}")
                 else:
-                    print(f"Size mismatch after truncation for horizon {pred_len}: TS2Vec={len(ts2vec_truncated)}, Enhanced={len(enhanced_truncated)}, Hybrid={len(hybrid_truncated)}")
+                    print(f"Size mismatch after flattening for horizon {pred_len}: TS2Vec={len(ts2vec_flat)}, Enhanced={len(enhanced_flat)}, Hybrid={len(hybrid_flat)}")
                     print("Falling back to 2-way ensemble")
                     # Two-way ensemble fallback
                     if pred_len <= 48:
