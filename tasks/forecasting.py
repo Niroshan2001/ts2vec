@@ -200,8 +200,12 @@ def eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, 
                         w1, w2, w3 = 0.4, 0.2, 0.4
                         
                     test_pred = w1 * ts2vec_flat + w2 * enhanced_flat + w3 * hybrid_flat
+                    
+                    # CRITICAL: Also truncate labels to match the ensemble predictions
+                    test_labels = test_labels[:min_samples * pred_len]
+                    
                     print(f"Using 3-way ensemble for horizon {pred_len}: TS2Vec({w1}), TS2Vec+Time({w2}), Hybrid({w3})")
-                    print(f"Final ensemble shapes - TS2Vec: {ts2vec_flat.shape}, Enhanced: {enhanced_flat.shape}, Hybrid: {hybrid_flat.shape}")
+                    print(f"Final ensemble shapes - Pred: {test_pred.shape}, Labels: {test_labels.shape}")
                 else:
                     print(f"Size mismatch after flattening for horizon {pred_len}: TS2Vec={len(ts2vec_flat)}, Enhanced={len(enhanced_flat)}, Hybrid={len(hybrid_flat)}")
                     print("Falling back to 2-way ensemble")
