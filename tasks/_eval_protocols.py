@@ -103,16 +103,17 @@ def fit_ridge(train_features, train_y, valid_features, valid_y, MAX_SAMPLES=1000
         valid_features = split[0]
         valid_y = split[2]
     
-    alphas = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000]
+    # Use wider range of alpha values with higher regularization to avoid ill-conditioning
+    alphas = [0.01, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
     valid_results = []
     for alpha in alphas:
-        lr = Ridge(alpha=alpha).fit(train_features, train_y)
+        lr = Ridge(alpha=alpha, solver='cholesky').fit(train_features, train_y)  # More stable solver
         valid_pred = lr.predict(valid_features)
         score = np.sqrt(((valid_pred - valid_y) ** 2).mean()) + np.abs(valid_pred - valid_y).mean()
         valid_results.append(score)
     best_alpha = alphas[np.argmin(valid_results)]
     
-    lr = Ridge(alpha=best_alpha)
+    lr = Ridge(alpha=best_alpha, solver='cholesky')  # Use stable solver
     lr.fit(train_features, train_y)
     return lr
 

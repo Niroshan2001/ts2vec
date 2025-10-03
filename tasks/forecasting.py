@@ -162,24 +162,42 @@ def eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, 
             # Get hybrid predictions in the right shape
             hybrid_pred = hybrid_predictions[pred_len]['norm']
             
-            # Ensure shapes match
-            if hybrid_pred.shape == test_pred_orig.shape:
-                # Three-way ensemble with adaptive weights
-                if pred_len <= 48:
-                    # Short horizons: favor TS2Vec, small contribution from others
-                    w1, w2, w3 = 0.7, 0.1, 0.2  # TS2Vec, TS2Vec+Time, Hybrid
-                elif pred_len <= 168:
-                    # Medium horizons: more balanced
-                    w1, w2, w3 = 0.5, 0.2, 0.3
+            # Debug shapes
+            print(f"Shapes - Hybrid: {hybrid_pred.shape}, TS2Vec: {test_pred_orig.shape}")
+            
+            # Try to align shapes by matching sample counts
+            min_samples = min(hybrid_pred.shape[0], len(test_pred_orig) // pred_len)
+            
+            if min_samples > 0:
+                # Truncate all predictions to same sample count
+                hybrid_aligned = hybrid_pred[:min_samples].reshape(-1)
+                ts2vec_aligned = test_pred_orig[:min_samples * pred_len]
+                enhanced_aligned = test_pred_enh[:min_samples * pred_len]
+                
+                if len(hybrid_aligned) == len(ts2vec_aligned) == len(enhanced_aligned):
+                    # Three-way ensemble with adaptive weights
+                    if pred_len <= 48:
+                        w1, w2, w3 = 0.7, 0.1, 0.2  # TS2Vec, TS2Vec+Time, Hybrid
+                    elif pred_len <= 168:
+                        w1, w2, w3 = 0.5, 0.2, 0.3
+                    else:
+                        w1, w2, w3 = 0.4, 0.2, 0.4
+                        
+                    test_pred = w1 * ts2vec_aligned + w2 * enhanced_aligned + w3 * hybrid_aligned
+                    print(f"Using 3-way ensemble for horizon {pred_len}: TS2Vec({w1}), TS2Vec+Time({w2}), Hybrid({w3})")
                 else:
-                    # Long horizons: let hybrid model contribute more
-                    w1, w2, w3 = 0.4, 0.2, 0.4
-                    
-                test_pred = w1 * test_pred_orig + w2 * test_pred_enh + w3 * hybrid_pred.reshape(-1)
-                print(f"Using 3-way ensemble for horizon {pred_len}: TS2Vec({w1}), TS2Vec+Time({w2}), Hybrid({w3})")
+                    print(f"Size mismatch after alignment for horizon {pred_len}, falling back to 2-way ensemble")
+                    # Two-way ensemble fallback
+                    if pred_len <= 48:
+                        weights = [0.8, 0.2]
+                    elif pred_len <= 168:
+                        weights = [0.6, 0.4]
+                    else:
+                        weights = [0.5, 0.5]
+                    test_pred = ensemble_predictions(test_pred_orig, test_pred_enh, weights=weights, method='weighted')
             else:
-                print(f"Shape mismatch for hybrid prediction at horizon {pred_len}, falling back to 2-way ensemble")
-                # Two-way ensemble: TS2Vec + TS2Vec+Time
+                print(f"No valid samples for alignment at horizon {pred_len}, falling back to 2-way ensemble")
+                # Two-way ensemble fallback
                 if pred_len <= 48:
                     weights = [0.8, 0.2]
                 elif pred_len <= 168:
