@@ -103,17 +103,26 @@ def fit_ridge(train_features, train_y, valid_features, valid_y, MAX_SAMPLES=1000
         valid_features = split[0]
         valid_y = split[2]
     
-    # Use wider range of alpha values with higher regularization to avoid ill-conditioning
-    alphas = [0.01, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
+    # Use much higher regularization to prevent ill-conditioning
+    # When time features are added, multicollinearity increases significantly
+    alphas = [1, 5, 10, 50, 100, 500, 1000, 2000, 5000, 10000]
     valid_results = []
+    
     for alpha in alphas:
-        lr = Ridge(alpha=alpha, solver='cholesky').fit(train_features, train_y)  # More stable solver
-        valid_pred = lr.predict(valid_features)
-        score = np.sqrt(((valid_pred - valid_y) ** 2).mean()) + np.abs(valid_pred - valid_y).mean()
-        valid_results.append(score)
+        try:
+            # Use SVD solver for numerical stability with ill-conditioned matrices
+            lr = Ridge(alpha=alpha, solver='svd').fit(train_features, train_y)
+            valid_pred = lr.predict(valid_features)
+            score = np.sqrt(((valid_pred - valid_y) ** 2).mean()) + np.abs(valid_pred - valid_y).mean()
+            valid_results.append(score)
+        except np.linalg.LinAlgError:
+            # If even SVD fails, use very high regularization
+            valid_results.append(float('inf'))
+    
     best_alpha = alphas[np.argmin(valid_results)]
     
-    lr = Ridge(alpha=best_alpha, solver='cholesky')  # Use stable solver
+    # Train final model with SVD solver for stability
+    lr = Ridge(alpha=best_alpha, solver='svd')
     lr.fit(train_features, train_y)
     return lr
 

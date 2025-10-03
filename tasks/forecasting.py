@@ -165,16 +165,23 @@ def eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, 
             # Debug shapes
             print(f"Shapes - Hybrid: {hybrid_pred.shape}, TS2Vec: {test_pred_orig.shape}")
             
-            # Try to align shapes by matching sample counts
-            min_samples = min(hybrid_pred.shape[0], len(test_pred_orig) // pred_len)
+            # Calculate expected TS2Vec shape (flattened)
+            expected_ts2vec_samples = len(test_pred_orig) // pred_len
+            expected_hybrid_samples = hybrid_pred.shape[0]
+            
+            # Find minimum sample count and align
+            min_samples = min(expected_ts2vec_samples, expected_hybrid_samples)
             
             if min_samples > 0:
-                # Truncate all predictions to same sample count
-                hybrid_aligned = hybrid_pred[:min_samples].reshape(-1)
-                ts2vec_aligned = test_pred_orig[:min_samples * pred_len]
-                enhanced_aligned = test_pred_enh[:min_samples * pred_len]
+                # Truncate TS2Vec predictions to match sample count
+                ts2vec_truncated = test_pred_orig[:min_samples * pred_len]
+                enhanced_truncated = test_pred_enh[:min_samples * pred_len]
                 
-                if len(hybrid_aligned) == len(ts2vec_aligned) == len(enhanced_aligned):
+                # Truncate and flatten hybrid predictions
+                hybrid_truncated = hybrid_pred[:min_samples].reshape(-1)
+                
+                # Verify all arrays have same size
+                if len(ts2vec_truncated) == len(enhanced_truncated) == len(hybrid_truncated):
                     # Three-way ensemble with adaptive weights
                     if pred_len <= 48:
                         w1, w2, w3 = 0.7, 0.1, 0.2  # TS2Vec, TS2Vec+Time, Hybrid
@@ -183,10 +190,12 @@ def eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, 
                     else:
                         w1, w2, w3 = 0.4, 0.2, 0.4
                         
-                    test_pred = w1 * ts2vec_aligned + w2 * enhanced_aligned + w3 * hybrid_aligned
+                    test_pred = w1 * ts2vec_truncated + w2 * enhanced_truncated + w3 * hybrid_truncated
                     print(f"Using 3-way ensemble for horizon {pred_len}: TS2Vec({w1}), TS2Vec+Time({w2}), Hybrid({w3})")
+                    print(f"Ensemble shapes - TS2Vec: {ts2vec_truncated.shape}, Enhanced: {enhanced_truncated.shape}, Hybrid: {hybrid_truncated.shape}")
                 else:
-                    print(f"Size mismatch after alignment for horizon {pred_len}, falling back to 2-way ensemble")
+                    print(f"Size mismatch after truncation for horizon {pred_len}: TS2Vec={len(ts2vec_truncated)}, Enhanced={len(enhanced_truncated)}, Hybrid={len(hybrid_truncated)}")
+                    print("Falling back to 2-way ensemble")
                     # Two-way ensemble fallback
                     if pred_len <= 48:
                         weights = [0.8, 0.2]
