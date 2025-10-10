@@ -1,5 +1,5 @@
 import numpy as np
-from sklearn.linear_model import Ridge
+from sklearn.linear_model import Ridge, ElasticNet
 from sklearn.svm import SVC
 from sklearn.linear_model import LogisticRegression
 from sklearn.neighbors import KNeighborsClassifier
@@ -95,26 +95,41 @@ def fit_ridge(train_features, train_y, valid_features, valid_y, MAX_SAMPLES=1000
         valid_features = split[0]
         valid_y = split[2]
     
-    # Standardize features for better numerical stability
+    # Try ElasticNet first (more robust to multicollinearity)
+    # ElasticNet combines L1 and L2 regularization, making it more stable
+    alphas = [0.01, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0]
+    l1_ratios = [0.1, 0.5, 0.7, 0.9]  # Mix of L1 and L2 regularization
+    
+    best_score = np.inf
+    best_alpha = 1.0
+    best_l1_ratio = 0.5
+    
+    # Standardize features
     scaler = StandardScaler()
     train_features_scaled = scaler.fit_transform(train_features)
     valid_features_scaled = scaler.transform(valid_features)
     
-    # Improved alpha range for better numerical stability
-    alphas = [0.01, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
-    valid_results = []
+    # Search for best ElasticNet parameters
     for alpha in alphas:
-        # Use more stable solver for ill-conditioned matrices
-        lr = Ridge(alpha=alpha, solver='auto').fit(train_features_scaled, train_y)
-        valid_pred = lr.predict(valid_features_scaled)
-        score = np.sqrt(((valid_pred - valid_y) ** 2).mean()) + np.abs(valid_pred - valid_y).mean()
-        valid_results.append(score)
-    best_alpha = alphas[np.argmin(valid_results)]
+        for l1_ratio in l1_ratios:
+            try:
+                model = ElasticNet(alpha=alpha, l1_ratio=l1_ratio, max_iter=2000, random_state=42)
+                model.fit(train_features_scaled, train_y)
+                valid_pred = model.predict(valid_features_scaled)
+                score = np.sqrt(((valid_pred - valid_y) ** 2).mean()) + np.abs(valid_pred - valid_y).mean()
+                
+                if score < best_score:
+                    best_score = score
+                    best_alpha = alpha
+                    best_l1_ratio = l1_ratio
+            except:
+                continue
     
-    # Create pipeline with the best alpha and scaling
-    pipe = Pipeline([
+    # Create final pipeline with best parameters
+    final_pipe = Pipeline([
         ('scaler', StandardScaler()),
-        ('ridge', Ridge(alpha=best_alpha, solver='auto'))
+        ('regressor', ElasticNet(alpha=best_alpha, l1_ratio=best_l1_ratio, max_iter=2000, random_state=42))
     ])
-    pipe.fit(train_features, train_y)
-    return pipe
+    
+    final_pipe.fit(train_features, train_y)
+    return final_pipe
