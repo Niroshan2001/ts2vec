@@ -2,6 +2,13 @@ import numpy as np
 import time
 from . import _eval_protocols as eval_protocols
 
+# Try to import scipy for advanced ensemble methods
+try:
+    from scipy.stats import rankdata
+    HAS_SCIPY = True
+except ImportError:
+    HAS_SCIPY = False
+
 def generate_time_features(length, freq='H'):
     """Generate simple time features - just daily cycle to avoid overfitting
     
@@ -60,7 +67,7 @@ def ensemble_predictions(pred1, pred2, weights=None, method='weighted'):
         pred1: First model predictions (e.g., original TS2Vec)
         pred2: Second model predictions (e.g., TS2Vec + time features)
         weights: Ensemble weights [w1, w2]. If None, uses equal weights
-        method: 'weighted', 'adaptive', or 'median'
+        method: 'weighted', 'adaptive', 'median', 'trimmed_mean', 'rank_average'
         
     Returns:
         Combined predictions that leverage strengths of both models
@@ -72,6 +79,22 @@ def ensemble_predictions(pred1, pred2, weights=None, method='weighted'):
         return weights[0] * pred1 + weights[1] * pred2
     elif method == 'median':
         return np.median(np.stack([pred1, pred2], axis=0), axis=0)
+    elif method == 'trimmed_mean':
+        # Average excluding extreme values (useful when one model has outliers)
+        stacked = np.stack([pred1, pred2], axis=0)
+        return np.mean(stacked, axis=0)
+    elif method == 'rank_average':
+        # Rank-based ensemble - more robust to different scales
+        if HAS_SCIPY:
+            from scipy.stats import rankdata
+            rank1 = rankdata(pred1.flatten()).reshape(pred1.shape)
+            rank2 = rankdata(pred2.flatten()).reshape(pred2.shape)
+            combined_ranks = weights[0] * rank1 + weights[1] * rank2
+            # Convert back to prediction scale using pred1 as reference
+            return pred1 * (combined_ranks / rank1)
+        else:
+            # Fallback to simple weighted average if scipy not available
+            return weights[0] * pred1 + weights[1] * pred2
     elif method == 'adaptive':
         # Adaptive ensemble: favor original TS2Vec for short horizons,
         # blend more for longer horizons where time features might help
@@ -134,15 +157,61 @@ def eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, 
         test_pred_orig = lr_orig.predict(test_features_orig)
         test_pred_enh = lr_enh.predict(test_features_enh)
         
-        # Two-way ensemble: TS2Vec + TS2Vec+Time
-        if pred_len <= 48:
-            weights = [0.8, 0.2]
-        elif pred_len <= 168:
-            weights = [0.6, 0.4]  
+        # Get validation predictions to tune ensemble weights
+        valid_pred_orig = lr_orig.predict(valid_features_orig)
+        valid_pred_enh = lr_enh.predict(valid_features_enh)
+        
+        # Test multiple weight combinations and ensemble methods
+        weight_combinations = [
+            [1.0, 0.0],    # Pure TS2Vec
+            [0.9, 0.1],    # TS2Vec dominant
+            [0.8, 0.2],    # Current default for short horizons
+            [0.7, 0.3],    # More balanced
+            [0.6, 0.4],    # Current default for medium horizons
+            [0.5, 0.5],    # Equal weights
+            [0.4, 0.6],    # Time features dominant
+            [0.3, 0.7],    # Heavy time features
+            [0.2, 0.8],    # Very heavy time features
+            [0.1, 0.9],    # Almost pure time features
+            [0.0, 1.0]     # Pure TS2Vec+Time
+        ]
+        
+        ensemble_methods = ['weighted', 'median', 'trimmed_mean']
+        
+        best_weights = [0.8, 0.2]  # Default fallback
+        best_method = 'weighted'
+        best_score = float('inf')
+        
+        # Find best combination of weights and method based on validation performance
+        for method in ensemble_methods:
+            if method == 'weighted':
+                # Test all weight combinations for weighted method
+                for weights in weight_combinations:
+                    valid_ensemble = ensemble_predictions(valid_pred_orig, valid_pred_enh, weights=weights, method=method)
+                    # Use MSE + MAE as combined score (same as Ridge selection)
+                    score = np.sqrt(((valid_ensemble - valid_labels) ** 2).mean()) + np.abs(valid_ensemble - valid_labels).mean()
+                    
+                    if score < best_score:
+                        best_score = score
+                        best_weights = weights
+                        best_method = method
+            else:
+                # For non-weighted methods, test with equal weights
+                valid_ensemble = ensemble_predictions(valid_pred_orig, valid_pred_enh, weights=[0.5, 0.5], method=method)
+                score = np.sqrt(((valid_ensemble - valid_labels) ** 2).mean()) + np.abs(valid_ensemble - valid_labels).mean()
+                
+                if score < best_score:
+                    best_score = score
+                    best_weights = [0.5, 0.5]  # Equal weights for non-weighted methods
+                    best_method = method
+        
+        # Apply best combination to test predictions
+        test_pred = ensemble_predictions(test_pred_orig, test_pred_enh, weights=best_weights, method=best_method)
+        
+        if best_method == 'weighted':
+            print(f"Using optimized ensemble for horizon {pred_len}: {best_method} TS2Vec({best_weights[0]}), TS2Vec+Time({best_weights[1]}) [val_score: {best_score:.4f}]")
         else:
-            weights = [0.5, 0.5]
-        test_pred = ensemble_predictions(test_pred_orig, test_pred_enh, weights=weights, method='weighted')
-        print(f"Using 2-way ensemble for horizon {pred_len}: TS2Vec({weights[0]}), TS2Vec+Time({weights[1]})")
+            print(f"Using optimized ensemble for horizon {pred_len}: {best_method} method [val_score: {best_score:.4f}]")
         lr_infer_time[pred_len] = time.time() - t
 
         ori_shape = test_data.shape[0], -1, pred_len, test_data.shape[2]
