@@ -1,5 +1,5 @@
 """
-Test script for Enhanced TS2Vec with Time Features + XGBoost
+Test script for Enhanced TS2Vec with Time Features
 This validates our improvements to TS2Vec's forecasting capabilities.
 """
 
@@ -30,39 +30,6 @@ def test_time_features():
     
     print("   ✅ Time features test PASSED!")
     return True
-
-def test_xgboost_availability():
-    """Test XGBoost availability and fallback mechanism"""
-    print("\n🔹 Testing XGBoost Integration...")
-    
-    try:
-        from tasks._eval_protocols import fit_xgboost, HAS_XGB
-        
-        if HAS_XGB:
-            print("   ✅ XGBoost is available")
-        else:
-            print("   ⚠️  XGBoost not available - will fallback to Ridge")
-        
-        # Test with synthetic data
-        np.random.seed(42)
-        train_X = np.random.randn(100, 10)
-        train_y = np.random.randn(100, 5)
-        valid_X = np.random.randn(50, 10)
-        valid_y = np.random.randn(50, 5)
-        
-        model = fit_xgboost(train_X, train_y, valid_X, valid_y)
-        print(f"   ✅ Model type: {type(model).__name__}")
-        
-        # Test prediction
-        pred = model.predict(valid_X)
-        print(f"   ✅ Prediction shape: {pred.shape}")
-        
-        print("   ✅ XGBoost integration test PASSED!")
-        return True
-        
-    except Exception as e:
-        print(f"   ❌ XGBoost test failed: {e}")
-        return False
 
 def test_enhanced_sample_generation():
     """Test enhanced sample generation with time features"""
@@ -111,13 +78,10 @@ def main():
     print("=" * 50)
     
     tests_passed = 0
-    total_tests = 3
+    total_tests = 2
     
     # Run individual tests
     if test_time_features():
-        tests_passed += 1
-    
-    if test_xgboost_availability():
         tests_passed += 1
         
     if test_enhanced_sample_generation():
@@ -131,12 +95,12 @@ def main():
         print("🎉 All tests PASSED! Enhanced TS2Vec is ready for forecasting.")
         print("\n📋 Summary of Enhancements:")
         print("   • ✅ Explicit temporal features (daily/weekly/monthly cycles)")
-        print("   • ✅ XGBoost regression head (with Ridge fallback)")
+        print("   • ✅ Ridge regression head for forecasting")
         print("   • ✅ Enhanced sample generation pipeline")
         print("\n🎯 Expected Benefits:")
         print("   • Better long-horizon forecasting (H=168, 336, 720)")
         print("   • Improved handling of seasonal patterns")
-        print("   • Non-linear temporal relationship modeling")
+        print("   • Linear temporal relationship modeling with time features")
     else:
         print("⚠️  Some tests failed. Please check the implementation.")
 

@@ -30,9 +30,8 @@ Time Series → Explicit Time Features → Enhanced Embeddings ┘
 ### Modified Files
 
 1. **`tasks/forecasting.py`** - Main forecasting evaluation with ensemble logic
-2. **`tasks/_eval_protocols.py`** - Added XGBoost regression option
-3. **`boosted_hybrid_model.py`** - Optional hybrid model (Sinusoidal + XGBoost)
-4. **`requirements.txt`** - Added XGBoost dependency
+2. **`tasks/_eval_protocols.py`** - Enhanced regression protocols
+3. **`requirements.txt`** - Updated dependencies
 
 ### New Functions Added
 
@@ -90,11 +89,6 @@ def ensemble_predictions(pred1, pred2, weights, method='weighted'):
 pip install -r requirements.txt
 ```
 
-### New Dependencies
-```txt
-xgboost==1.6.2  # For optional hybrid model
-```
-
 ### File Changes Required
 
 #### 1. Update `tasks/forecasting.py`
@@ -104,8 +98,8 @@ xgboost==1.6.2  # For optional hybrid model
 - Handle graceful fallbacks
 
 #### 2. Update `tasks/_eval_protocols.py`
-- Add XGBoost regression option
-- Maintain backward compatibility with Ridge
+- Enhanced regression protocols
+- Maintain Ridge regression functionality
 
 #### 3. Fix deprecated pandas functions in `datautils.py`
 ```python
@@ -125,7 +119,7 @@ python train.py ETTh1 forecast_univar --loader forecast_csv_univar --repr-dims 3
 
 ### Advanced Options
 The enhanced system automatically:
-- Detects available components (hybrid model, XGBoost)
+- Uses Ridge regression for stable predictions
 - Chooses optimal ensemble strategy
 - Falls back gracefully if components fail
 
