@@ -4,7 +4,7 @@ from sklearn.svm import SVC
 from sklearn.linear_model import LogisticRegression
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import StandardScaler
-from sklearn.pipeline import make_pipeline
+from sklearn.pipeline import make_pipeline, Pipeline
 from sklearn.model_selection import GridSearchCV, train_test_split
 
 def fit_svm(features, y, MAX_SAMPLES=10000):
@@ -95,15 +95,26 @@ def fit_ridge(train_features, train_y, valid_features, valid_y, MAX_SAMPLES=1000
         valid_features = split[0]
         valid_y = split[2]
     
-    alphas = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000]
+    # Standardize features for better numerical stability
+    scaler = StandardScaler()
+    train_features_scaled = scaler.fit_transform(train_features)
+    valid_features_scaled = scaler.transform(valid_features)
+    
+    # Improved alpha range for better numerical stability
+    alphas = [0.01, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
     valid_results = []
     for alpha in alphas:
-        lr = Ridge(alpha=alpha).fit(train_features, train_y)
-        valid_pred = lr.predict(valid_features)
+        # Use more stable solver for ill-conditioned matrices
+        lr = Ridge(alpha=alpha, solver='auto').fit(train_features_scaled, train_y)
+        valid_pred = lr.predict(valid_features_scaled)
         score = np.sqrt(((valid_pred - valid_y) ** 2).mean()) + np.abs(valid_pred - valid_y).mean()
         valid_results.append(score)
     best_alpha = alphas[np.argmin(valid_results)]
     
-    lr = Ridge(alpha=best_alpha)
-    lr.fit(train_features, train_y)
-    return lr
+    # Create pipeline with the best alpha and scaling
+    pipe = Pipeline([
+        ('scaler', StandardScaler()),
+        ('ridge', Ridge(alpha=best_alpha, solver='auto'))
+    ])
+    pipe.fit(train_features, train_y)
+    return pipe
