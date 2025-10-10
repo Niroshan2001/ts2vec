@@ -1,11 +1,12 @@
 import numpy as np
-from sklearn.linear_model import Ridge, ElasticNet
+from sklearn.linear_model import Ridge
 from sklearn.svm import SVC
 from sklearn.linear_model import LogisticRegression
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import make_pipeline, Pipeline
 from sklearn.model_selection import GridSearchCV, train_test_split
+import warnings
 
 def fit_svm(features, y, MAX_SAMPLES=10000):
     nb_classes = np.unique(y, return_counts=True)[1].shape[0]
@@ -95,41 +96,38 @@ def fit_ridge(train_features, train_y, valid_features, valid_y, MAX_SAMPLES=1000
         valid_features = split[0]
         valid_y = split[2]
     
-    # Try ElasticNet first (more robust to multicollinearity)
-    # ElasticNet combines L1 and L2 regularization, making it more stable
-    alphas = [0.01, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0]
-    l1_ratios = [0.1, 0.5, 0.7, 0.9]  # Mix of L1 and L2 regularization
-    
-    best_score = np.inf
-    best_alpha = 1.0
-    best_l1_ratio = 0.5
-    
-    # Standardize features
-    scaler = StandardScaler()
-    train_features_scaled = scaler.fit_transform(train_features)
-    valid_features_scaled = scaler.transform(valid_features)
-    
-    # Search for best ElasticNet parameters
-    for alpha in alphas:
-        for l1_ratio in l1_ratios:
-            try:
-                model = ElasticNet(alpha=alpha, l1_ratio=l1_ratio, max_iter=2000, random_state=42)
-                model.fit(train_features_scaled, train_y)
-                valid_pred = model.predict(valid_features_scaled)
-                score = np.sqrt(((valid_pred - valid_y) ** 2).mean()) + np.abs(valid_pred - valid_y).mean()
-                
-                if score < best_score:
-                    best_score = score
-                    best_alpha = alpha
-                    best_l1_ratio = l1_ratio
-            except:
-                continue
-    
-    # Create final pipeline with best parameters
-    final_pipe = Pipeline([
-        ('scaler', StandardScaler()),
-        ('regressor', ElasticNet(alpha=best_alpha, l1_ratio=best_l1_ratio, max_iter=2000, random_state=42))
-    ])
-    
-    final_pipe.fit(train_features, train_y)
-    return final_pipe
+    # Suppress sklearn warnings about ill-conditioned matrices
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=UserWarning)
+        warnings.filterwarnings("ignore", message=".*ill-conditioned.*")
+        warnings.filterwarnings("ignore", message=".*LinAlgWarning.*")
+        
+        # Use a wider range of alpha values with standardization
+        alphas = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000]
+        
+        # Standardize features first
+        scaler = StandardScaler()
+        train_features_scaled = scaler.fit_transform(train_features)
+        valid_features_scaled = scaler.transform(valid_features)
+        
+        best_score = np.inf
+        best_alpha = 1.0
+        
+        for alpha in alphas:
+            # Use SVD solver which is more numerically stable
+            lr = Ridge(alpha=alpha, solver='svd')
+            lr.fit(train_features_scaled, train_y)
+            valid_pred = lr.predict(valid_features_scaled)
+            score = np.sqrt(((valid_pred - valid_y) ** 2).mean()) + np.abs(valid_pred - valid_y).mean()
+            
+            if score < best_score:
+                best_score = score
+                best_alpha = alpha
+        
+        # Create final pipeline with best alpha and SVD solver
+        pipe = Pipeline([
+            ('scaler', StandardScaler()),
+            ('ridge', Ridge(alpha=best_alpha, solver='svd'))
+        ])
+        pipe.fit(train_features, train_y)
+        return pipe
