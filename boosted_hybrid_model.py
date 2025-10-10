@@ -1,12 +1,11 @@
 """
-Boosted Hybrid Model: Sinusoidal Regressor + XGBoost
-This implements the method from your notebook for ensemble with TS2Vec.
+Simple Sinusoidal Forecaster for TS2Vec Ensemble
+This implements only the sinusoidal regression component for fast ensemble forecasting.
 """
 
 import numpy as np
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error, mean_absolute_error
-import xgboost as xgb
 
 
 def create_dataset_ts2vec_style(series, pred_len, drop=0):
@@ -52,47 +51,6 @@ def create_dataset_ts2vec_style(series, pred_len, drop=0):
     return X, labels
 
 
-def create_dataset_with_lookback(series, input_len, pred_len, drop=0):
-    """
-    Create dataset with proper lookback window, aligned with TS2Vec logic
-    
-    Args:
-        series: Time series data [timesteps]
-        input_len: Length of input window (e.g., 168)
-        pred_len: Prediction horizon length
-        drop: Number of samples to drop from beginning (padding compensation)
-        
-    Returns:
-        X, y arrays aligned with TS2Vec sample generation
-    """
-    n = len(series)
-    
-    # Calculate available samples using TS2Vec logic
-    # TS2Vec removes last pred_len steps, then applies drop
-    max_samples = n - pred_len - drop - input_len + 1
-    
-    if max_samples <= 0:
-        return np.array([]), np.array([])
-    
-    X, y = [], []
-    
-    # Generate samples aligned with TS2Vec's indexing
-    for i in range(max_samples):
-        # Input window
-        start_idx = i + drop
-        end_idx = start_idx + input_len
-        
-        # Prediction targets (aligned with TS2Vec label generation)
-        pred_start = end_idx
-        pred_end = pred_start + pred_len
-        
-        if pred_end <= n:
-            X.append(series[start_idx:end_idx])
-            y.append(series[pred_start:pred_end])
-    
-    return np.array(X), np.array(y)
-
-
 def add_sin_features(n_samples, horizon, period=24):
     """Generate sinusoidal features for given horizon"""
     t = np.arange(horizon)
@@ -101,64 +59,43 @@ def add_sin_features(n_samples, horizon, period=24):
     return np.vstack([sin_feat, cos_feat]).T
 
 
-class BoostedHybridForecaster:
-    """Sinusoidal + XGBoost ensemble for time series forecasting"""
+class SimpleSinusoidalForecaster:
+    """Simple sinusoidal regressor for time series forecasting"""
     
-    def __init__(self, input_len=168, period=24, xgb_params=None):
-        self.input_len = input_len
+    def __init__(self, period=24):
         self.period = period
-        self.linreg = LinearRegression()
+        self.models = {}
         
-        # Default XGBoost parameters optimized for residual modeling
-        if xgb_params is None:
-            xgb_params = {
-                'n_estimators': 100,
-                'learning_rate': 0.01,
-                'max_depth': 5,
-                'tree_method': 'hist',
-                'random_state': 42
-            }
-        self.xgb_model = xgb.XGBRegressor(**xgb_params)
-        
-    def fit_for_horizons(self, series, train_slice, val_slice, horizons):
+    def fit_for_horizons(self, series, train_slice, val_slice, horizons, padding=200):
         """
-        Train the boosted hybrid model for specific horizons
+        Train sinusoidal regression models for specific horizons
         
         Args:
             series: Normalized time series data [timesteps]
             train_slice: Training data slice
-            val_slice: Validation data slice for early stopping
+            val_slice: Validation data slice (unused but kept for compatibility)
             horizons: List of specific horizons to train for
+            padding: Padding value to match TS2Vec logic
         """
         self.models = {}
         
         for horizon in horizons:
-            print(f"Training hybrid model for horizon {horizon}...")
+            print(f"Training sinusoidal model for horizon {horizon}...")
             
-            # Create windowed dataset using TS2Vec-aligned logic
-            X, y = create_dataset_with_lookback(series, self.input_len, horizon, drop=0)
+            # Create windowed dataset using TS2Vec-style logic
+            X, y = create_dataset_ts2vec_style(series, horizon, drop=padding)
             
-            # Apply slicing to match TS2Vec's train/val splits
-            # Convert slice indices to sample indices
-            train_samples = min(len(X), train_slice.stop - self.input_len - horizon)
-            val_start = max(0, val_slice.start - self.input_len - horizon)
-            val_samples = min(len(X), val_slice.stop - self.input_len - horizon)
-            
-            if train_samples <= 0 or val_samples <= val_start:
-                print(f"Insufficient data for horizon {horizon}")
-                continue
-                
-            X_train = X[:train_samples]
-            y_train = y[:train_samples]
-            X_val = X[val_start:val_samples] if val_samples > val_start else X[:1]
-            y_val = y[val_start:val_samples] if val_samples > val_start else y[:1]
+            # Split according to provided slices (adjust for windowing)
+            train_end = min(train_slice.stop, len(X))
+            X_train = X[train_slice.start:train_end]
+            y_train = y[train_slice.start:train_end]
             
             # Skip if not enough data
-            if len(X_train) == 0 or len(y_train) == 0:
-                print(f"No training data for horizon {horizon}")
+            if len(X_train) == 0:
+                print(f"Skipping horizon {horizon} - not enough training data")
                 continue
                 
-            # 1. Train sinusoidal regressor
+            # Train sinusoidal regressor
             sin_features = add_sin_features(len(y_train), horizon, self.period)
             X_sin = np.tile(sin_features, (len(y_train), 1))
             y_train_flat = y_train.flatten()
@@ -166,85 +103,53 @@ class BoostedHybridForecaster:
             linreg = LinearRegression()
             linreg.fit(X_sin, y_train_flat)
             
-            # 2. Compute residuals
-            y_train_pred_sin = linreg.predict(X_sin).reshape(len(y_train), horizon)
-            residuals = y_train - y_train_pred_sin
-            
-            # 3. Train XGBoost on residuals
-            X_train_flat = X_train.reshape(len(X_train), -1)
-            residuals_flat = residuals.reshape(len(residuals), -1)
-            
-            xgb_model = xgb.XGBRegressor(
-                n_estimators=100,
-                learning_rate=0.01, 
-                max_depth=5,
-                tree_method='hist',
-                random_state=42
-            )
-            xgb_model.fit(X_train_flat, residuals_flat)
-            
             # Store models
             self.models[horizon] = {
                 'linreg': linreg,
-                'xgb_model': xgb_model,
                 'sin_features': sin_features
             }
+            print(f"Trained sinusoidal model for horizon {horizon} with {len(y_train)} samples")
             
-    def predict(self, series, test_slice, horizon, padding=200):
+    def predict_ts2vec_aligned(self, series, test_slice, horizon, padding=200):
         """
-        Generate predictions for given horizon using TS2Vec-aligned logic
+        Generate predictions aligned with TS2Vec output
         
         Args:
             series: Normalized time series data
-            test_slice: Test data slice
+            test_slice: Test data slice  
             horizon: Prediction horizon
-            padding: Padding to match TS2Vec (default 200)
+            padding: Padding value to match TS2Vec
             
         Returns:
-            Predictions array [n_samples, horizon]
+            Predictions array [n_samples, horizon] aligned with TS2Vec
         """
         if horizon not in self.models:
             raise ValueError(f"Model not trained for horizon {horizon}")
         
         model_dict = self.models[horizon]
         linreg = model_dict['linreg']
-        xgb_model = model_dict['xgb_model']
         sin_features = model_dict['sin_features']
         
-        # Create windowed dataset using TS2Vec-aligned logic with padding
-        X, y = create_dataset_with_lookback(series, self.input_len, horizon, drop=padding)
+        # Create windowed dataset using same logic as training
+        X, y = create_dataset_ts2vec_style(series, horizon, drop=padding)
         
-        # Calculate test sample indices aligned with TS2Vec
-        # TS2Vec test_slice refers to timesteps, we need to convert to sample indices
-        test_start_sample = max(0, test_slice.start - self.input_len - horizon - padding)
-        test_end_sample = min(len(X), test_slice.stop - self.input_len - horizon - padding)
-        
-        if test_end_sample <= test_start_sample:
-            print(f"No test samples available for horizon {horizon}")
-            return np.array([])
-        
-        X_test = X[test_start_sample:test_end_sample]
+        # Align with test slice (adjust for windowing effects)
+        test_end = min(test_slice.stop, len(X))
+        X_test = X[test_slice.start:test_end]
         
         if len(X_test) == 0:
             return np.array([])
         
-        # 1. Sinusoidal prediction
+        # Generate sinusoidal predictions
         X_sin_test = np.tile(sin_features, (len(X_test), 1))
-        y_pred_sin = linreg.predict(X_sin_test).reshape(len(X_test), horizon)
-        
-        # 2. Residual correction with XGBoost
-        X_test_flat = X_test.reshape(len(X_test), -1)
-        res_pred = xgb_model.predict(X_test_flat).reshape(len(X_test), horizon)
-        
-        # 3. Final prediction = sinusoidal + residual
-        y_pred = y_pred_sin + res_pred
+        y_pred = linreg.predict(X_sin_test).reshape(len(X_test), horizon)
         
         return y_pred
 
 
 def get_hybrid_predictions(data, train_slice, val_slice, test_slice, pred_lens, scaler):
     """
-    Generate predictions using the Boosted Hybrid Model for ensemble with TS2Vec
+    Generate predictions using Simple Sinusoidal Model for ensemble with TS2Vec
     
     Args:
         data: Time series data [batch, time, features] 
@@ -258,35 +163,35 @@ def get_hybrid_predictions(data, train_slice, val_slice, test_slice, pred_lens, 
     # Extract univariate series (assuming last column is target)
     series = data[0, :, -1]  # [time_steps]
     
-    # Initialize hybrid model
-    hybrid_model = BoostedHybridForecaster(input_len=168, period=24)
+    # Initialize simple sinusoidal model
+    simple_model = SimpleSinusoidalForecaster(period=24)
     
     # Train the model for the specific horizons needed
-    hybrid_model.fit_for_horizons(series, train_slice, val_slice, pred_lens)
+    simple_model.fit_for_horizons(series, train_slice, val_slice, pred_lens, padding=200)
     
     # Generate predictions for each horizon
     predictions = {}
     
     for pred_len in pred_lens:
         try:
-            # Get hybrid predictions with TS2Vec padding alignment
-            hybrid_preds = hybrid_model.predict(series, test_slice, pred_len, padding=200)
+            # Get sinusoidal predictions
+            simple_preds = simple_model.predict_ts2vec_aligned(series, test_slice, pred_len, padding=200)
             
-            if len(hybrid_preds) > 0:
+            if len(simple_preds) > 0:
                 # Inverse transform predictions
-                hybrid_preds_inv = scaler.inverse_transform(
-                    hybrid_preds.reshape(-1, 1)
-                ).reshape(hybrid_preds.shape)
+                simple_preds_inv = scaler.inverse_transform(
+                    simple_preds.reshape(-1, 1)
+                ).reshape(simple_preds.shape)
                 
                 predictions[pred_len] = {
-                    'norm': hybrid_preds,
-                    'raw': hybrid_preds_inv
+                    'norm': simple_preds,
+                    'raw': simple_preds_inv
                 }
             else:
                 predictions[pred_len] = None
                 
         except Exception as e:
-            print(f"Hybrid model failed for horizon {pred_len}: {e}")
+            print(f"Sinusoidal model failed for horizon {pred_len}: {e}")
             predictions[pred_len] = None
             
     return predictions

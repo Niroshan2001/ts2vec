@@ -7,13 +7,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import make_pipeline
 from sklearn.model_selection import GridSearchCV, train_test_split
 
-# Add XGBoost import with fallback
-try:
-    import xgboost as xgb
-    HAS_XGB = True
-except ImportError:
-    HAS_XGB = False
-    print("Warning: XGBoost not available. Install with: pip install xgboost")
+# Simplified imports for clean ensemble approach
 
 def fit_svm(features, y, MAX_SAMPLES=10000):
     nb_classes = np.unique(y, return_counts=True)[1].shape[0]
@@ -125,55 +119,3 @@ def fit_ridge(train_features, train_y, valid_features, valid_y, MAX_SAMPLES=1000
     lr = Ridge(alpha=best_alpha, solver='svd')
     lr.fit(train_features, train_y)
     return lr
-
-def fit_xgboost(train_features, train_y, valid_features, valid_y, MAX_SAMPLES=100000):
-    """Fit XGBoost regressor with validation-based early stopping
-    
-    This provides a more powerful non-linear regression head compared to Ridge,
-    especially beneficial for long-horizon forecasting where complex temporal
-    relationships need to be captured.
-    
-    Args:
-        train_features: Training feature matrix
-        train_y: Training targets
-        valid_features: Validation feature matrix  
-        valid_y: Validation targets
-        MAX_SAMPLES: Maximum samples to use for training (for efficiency)
-        
-    Returns:
-        Trained XGBoost model (or Ridge as fallback if XGBoost unavailable)
-    """
-    if not HAS_XGB:
-        print("XGBoost not available, falling back to Ridge regression")
-        return fit_ridge(train_features, train_y, valid_features, valid_y, MAX_SAMPLES)
-    
-    # Subsample if dataset too large for efficient training
-    if train_features.shape[0] > MAX_SAMPLES:
-        split = train_test_split(
-            train_features, train_y,
-            train_size=MAX_SAMPLES, random_state=0
-        )
-        train_features = split[0]
-        train_y = split[2]
-    
-    # XGBoost configuration optimized for time series forecasting
-    model = xgb.XGBRegressor(
-        n_estimators=100,        # Moderate number to avoid overfitting
-        max_depth=6,             # Reasonable depth for capturing interactions
-        learning_rate=0.1,       # Conservative learning rate
-        subsample=0.8,           # Row subsampling for regularization
-        colsample_bytree=0.8,    # Feature subsampling
-        random_state=42,
-        n_jobs=-1,               # Use all CPU cores
-        verbosity=0              # Suppress output
-    )
-    
-    # Fit with early stopping based on validation performance
-    model.fit(
-        train_features, train_y,
-        eval_set=[(valid_features, valid_y)],
-        early_stopping_rounds=10,
-        verbose=False
-    )
-    
-    return model

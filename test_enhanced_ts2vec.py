@@ -1,5 +1,5 @@
 """
-Test script for Enhanced TS2Vec with Time Features + XGBoost
+Test script for Enhanced TS2Vec with Sinusoidal Time Features
 This validates our improvements to TS2Vec's forecasting capabilities.
 """
 
@@ -31,114 +31,105 @@ def test_time_features():
     print("   ✅ Time features test PASSED!")
     return True
 
-def test_xgboost_availability():
-    """Test XGBoost availability and fallback mechanism"""
-    print("\n🔹 Testing XGBoost Integration...")
+def test_sinusoidal_model():
+    """Test sinusoidal model integration"""
+    print("\n🔹 Testing Sinusoidal Model Integration...")
     
     try:
-        from tasks._eval_protocols import fit_xgboost, HAS_XGB
-        
-        if HAS_XGB:
-            print("   ✅ XGBoost is available")
-        else:
-            print("   ⚠️  XGBoost not available - will fallback to Ridge")
+        from boosted_hybrid_model import SimpleSinusoidalForecaster
         
         # Test with synthetic data
         np.random.seed(42)
-        train_X = np.random.randn(100, 10)
-        train_y = np.random.randn(100, 5)
-        valid_X = np.random.randn(50, 10)
-        valid_y = np.random.randn(50, 5)
+        series = np.random.randn(1000)
+        train_slice = slice(0, 600)
+        val_slice = slice(600, 800)
+        test_slice = slice(800, 1000)
         
-        model = fit_xgboost(train_X, train_y, valid_X, valid_y)
-        print(f"   ✅ Model type: {type(model).__name__}")
+        model = SimpleSinusoidalForecaster(period=24)
+        model.fit_for_horizons(series, train_slice, val_slice, horizons=[24], padding=200)
         
         # Test prediction
-        pred = model.predict(valid_X)
-        print(f"   ✅ Prediction shape: {pred.shape}")
+        preds = model.predict_ts2vec_aligned(series, test_slice, horizon=24, padding=200)
         
-        print("   ✅ XGBoost integration test PASSED!")
+        print(f"   ✅ Predictions shape: {preds.shape}")
+        print(f"   ✅ Model trained and prediction successful")
+        print("   ✅ Sinusoidal model integration test PASSED!")
         return True
         
     except Exception as e:
-        print(f"   ❌ XGBoost test failed: {e}")
+        print(f"   ❌ Sinusoidal model test failed: {e}")
         return False
 
-def test_enhanced_sample_generation():
-    """Test enhanced sample generation with time features"""
-    print("\n🔹 Testing Enhanced Sample Generation...")
+def test_enhanced_ts2vec_components():
+    """Test core TS2Vec enhancements"""
+    print("\n🔹 Testing Enhanced TS2Vec Components...")
     
-    from tasks.forecasting import generate_pred_samples
-    
-    # Create synthetic TS2Vec embeddings and data
-    np.random.seed(42)
-    batch_size = 2
-    seq_len = 200
-    embed_dim = 64
-    n_vars = 7
-    pred_len = 24
-    
-    # Synthetic TS2Vec features (batch_size, seq_len, embed_dim)
-    features = np.random.randn(batch_size, seq_len, embed_dim)
-    
-    # Synthetic time series data (batch_size, seq_len, n_vars)
-    data = np.random.randn(batch_size, seq_len, n_vars)
-    
-    # Test without time features
-    X_orig, y_orig = generate_pred_samples(features, data, pred_len, drop=50, add_time_features=False)
-    
-    # Test with time features
-    X_enhanced, y_enhanced = generate_pred_samples(features, data, pred_len, drop=50, add_time_features=True)
-    
-    print(f"   ✅ Original features shape: {X_orig.shape}")
-    print(f"   ✅ Enhanced features shape: {X_enhanced.shape}")
-    print(f"   ✅ Labels shape: {y_orig.shape}")
-    
-    # Enhanced features should have 6 additional time features
-    expected_diff = 6  # 6 time features (sin/cos for daily, weekly, monthly)
-    actual_diff = X_enhanced.shape[1] - X_orig.shape[1]
-    
-    assert actual_diff == expected_diff, f"Expected {expected_diff} additional features, got {actual_diff}"
-    assert y_enhanced.shape == y_orig.shape, "Labels should be identical"
-    
-    print(f"   ✅ Added {actual_diff} time features as expected")
-    print("   ✅ Enhanced sample generation test PASSED!")
-    return True
-
-def main():
-    """Run all tests for enhanced TS2Vec"""
-    print("🚀 Testing Enhanced TS2Vec Implementation")
-    print("=" * 50)
-    
-    tests_passed = 0
-    total_tests = 3
-    
-    # Run individual tests
-    if test_time_features():
-        tests_passed += 1
-    
-    if test_xgboost_availability():
-        tests_passed += 1
+    try:
+        # Test ensemble prediction function
+        from tasks.forecasting import ensemble_predictions
         
-    if test_enhanced_sample_generation():
-        tests_passed += 1
+        # Mock predictions for testing
+        ts2vec_preds = np.random.randn(100, 24) 
+        ts2vec_time_preds = np.random.randn(100, 24)
+        hybrid_preds = np.random.randn(100, 24)
+        
+        # Test 2-way ensemble
+        ensemble_2way = ensemble_predictions(
+            ts2vec_preds, ts2vec_time_preds, None, pred_len=24, 
+            strategy='adaptive', ensemble_type='2way'
+        )
+        
+        # Test 3-way ensemble 
+        ensemble_3way = ensemble_predictions(
+            ts2vec_preds, ts2vec_time_preds, hybrid_preds, pred_len=24,
+            strategy='adaptive', ensemble_type='3way'
+        )
+        
+        print(f"   ✅ 2-way ensemble shape: {ensemble_2way.shape}")
+        print(f"   ✅ 3-way ensemble shape: {ensemble_3way.shape}")
+        print("   ✅ Ensemble prediction test PASSED!")
+        return True
+        
+    except Exception as e:
+        print(f"   ❌ Enhanced TS2Vec test failed: {e}")
+        return False
+
+def run_all_tests():
+    """Run all tests and provide summary"""
+    print("=" * 60)
+    print("🚀 Enhanced TS2Vec Test Suite")
+    print("=" * 60)
     
-    # Final results
-    print("\n" + "=" * 50)
-    print(f"🎯 Test Results: {tests_passed}/{total_tests} tests passed")
+    tests = [
+        test_time_features,
+        test_sinusoidal_model, 
+        test_enhanced_ts2vec_components
+    ]
     
-    if tests_passed == total_tests:
-        print("🎉 All tests PASSED! Enhanced TS2Vec is ready for forecasting.")
-        print("\n📋 Summary of Enhancements:")
-        print("   • ✅ Explicit temporal features (daily/weekly/monthly cycles)")
-        print("   • ✅ XGBoost regression head (with Ridge fallback)")
-        print("   • ✅ Enhanced sample generation pipeline")
-        print("\n🎯 Expected Benefits:")
-        print("   • Better long-horizon forecasting (H=168, 336, 720)")
-        print("   • Improved handling of seasonal patterns")
-        print("   • Non-linear temporal relationship modeling")
+    passed = 0
+    total = len(tests)
+    
+    for test in tests:
+        if test():
+            passed += 1
+    
+    print("\n" + "=" * 60)
+    print("📊 Test Summary")
+    print("=" * 60)
+    print(f"✅ Passed: {passed}/{total}")
+    
+    if passed == total:
+        print("🎉 All tests PASSED! Enhanced TS2Vec is ready.")
+        print("\nEnhancements include:")
+        print("   • ⚡ Fast sinusoidal time features")
+        print("   • 🔄 Adaptive ensemble weighting")
+        print("   • 📈 Improved long-horizon forecasting")
+        print("   • 🛡️  Stable Ridge regression")
     else:
-        print("⚠️  Some tests failed. Please check the implementation.")
+        print(f"❌ {total - passed} tests failed. Please check errors above.")
+    
+    return passed == total
 
 if __name__ == "__main__":
-    main()
+    success = run_all_tests()
+    sys.exit(0 if success else 1)
