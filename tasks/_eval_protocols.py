@@ -6,8 +6,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import make_pipeline, Pipeline
-from sklearn.model_selection import GridSearchCV, train_test_splitumpy as np
-from sklearn.linear_model import Ridge
+from sklearn.model_selection import GridSearchCV, train_test_split
 from sklearn.svm import SVC
 from sklearn.linear_model import LogisticRegression
 from sklearn.neighbors import KNeighborsClassifier
