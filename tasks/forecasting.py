@@ -11,16 +11,17 @@ def detect_dataset_name():
     # Check command line arguments
     for arg in sys.argv:
         print(f"DEBUG: Checking arg: {arg}")  # Debug info
-        if 'ETTm1' in arg.upper():
+        arg_upper = arg.upper()
+        if 'ETTM1' in arg_upper:
             print(f"DEBUG: Found ETTm1 in arg: {arg}")  # Debug info
             return 'ETTm1'
-        elif 'ETTh1' in arg.upper():
+        elif 'ETTH1' in arg_upper:
             print(f"DEBUG: Found ETTh1 in arg: {arg}")  # Debug info
             return 'ETTh1'
-        elif 'ETTh2' in arg.upper():
+        elif 'ETTH2' in arg_upper:
             print(f"DEBUG: Found ETTh2 in arg: {arg}")  # Debug info
             return 'ETTh2'
-        elif 'ETTm2' in arg.upper():
+        elif 'ETTM2' in arg_upper:
             print(f"DEBUG: Found ETTm2 in arg: {arg}")  # Debug info
             return 'ETTm2'
     
