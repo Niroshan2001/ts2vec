@@ -6,21 +6,29 @@ from . import _eval_protocols as eval_protocols
 
 def detect_dataset_name():
     """Detect dataset name from command line arguments or environment"""
+    print(f"DEBUG: Command line args: {sys.argv}")  # Debug info
+    
     # Check command line arguments
     for arg in sys.argv:
+        print(f"DEBUG: Checking arg: {arg}")  # Debug info
         if 'ETTm1' in arg.upper():
+            print(f"DEBUG: Found ETTm1 in arg: {arg}")  # Debug info
             return 'ETTm1'
         elif 'ETTh1' in arg.upper():
+            print(f"DEBUG: Found ETTh1 in arg: {arg}")  # Debug info
             return 'ETTh1'
         elif 'ETTh2' in arg.upper():
+            print(f"DEBUG: Found ETTh2 in arg: {arg}")  # Debug info
             return 'ETTh2'
         elif 'ETTm2' in arg.upper():
+            print(f"DEBUG: Found ETTm2 in arg: {arg}")  # Debug info
             return 'ETTm2'
     
     # Check environment variables
     if 'DATASET_NAME' in os.environ:
         return os.environ['DATASET_NAME']
     
+    print("DEBUG: No dataset detected")  # Debug info
     return None
 
 def generate_time_features(length, freq='H'):
@@ -163,6 +171,8 @@ def eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, 
         if dataset_name is None:
             dataset_name = detect_dataset_name()
         
+        print(f"DEBUG: Detected dataset name: {dataset_name}")  # Debug info
+        
         if dataset_name and 'ETTm1' in dataset_name.upper():
             # Adaptive weights for ETTm1 dataset
             if pred_len <= 48:
@@ -171,10 +181,11 @@ def eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, 
                 weights = [0.6, 0.4]  
             else:
                 weights = [0.5, 0.5]
+            print(f"Using ETTm1 adaptive ensemble for horizon {pred_len}: TS2Vec({weights[0]}), TS2Vec+Time({weights[1]})")
         else:
-            # Fixed weights for all other datasets (ETTh1, ETTh2, etc.)
+            # Fixed weights for all other datasets (ETTh1, ETTh2, ETTm2, etc.)
             weights = [0.8, 0.2]
-        print(f"Using ensemble for horizon {pred_len}: TS2Vec({weights[0]}), TS2Vec+Time({weights[1]})")
+            print(f"Using fixed ensemble for horizon {pred_len}: TS2Vec({weights[0]}), TS2Vec+Time({weights[1]})")
         
         test_pred = ensemble_predictions(test_pred_orig, test_pred_enh, weights=weights, method='weighted')
         lr_infer_time[pred_len] = time.time() - t
