@@ -85,7 +85,7 @@ def cal_metrics(pred, target):
         'MAE': np.abs(pred - target).mean()
     }
     
-def eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, pred_lens, n_covariate_cols):
+def eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, pred_lens, n_covariate_cols, dataset_name=None):
     padding = 200
     
     t = time.time()
@@ -135,15 +135,23 @@ def eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, 
         test_pred_enh = lr_enh.predict(test_features_enh)
         
         # Two-way ensemble: TS2Vec + TS2Vec+Time
-        # if pred_len <= 48:
-        #     weights = [0.8, 0.2]
-        # elif pred_len <= 168:
-        #     weights = [0.6, 0.4]  
-        # else:
-        #     weights = [0.5, 0.5]
-        weights = [0.8, 0.2]
+        # ETTm1 dataset benefits from adaptive weights based on prediction horizon
+        # Other datasets work better with fixed weights favoring TS2Vec
+        if dataset_name and 'ETTm1' in dataset_name.upper():
+            # Adaptive weights for ETTm1 dataset
+            if pred_len <= 48:
+                weights = [0.8, 0.2]
+            elif pred_len <= 168:
+                weights = [0.6, 0.4]  
+            else:
+                weights = [0.5, 0.5]
+            print(f"Using ETTm1 adaptive ensemble for horizon {pred_len}: TS2Vec({weights[0]}), TS2Vec+Time({weights[1]})")
+        else:
+            # Fixed weights for all other datasets (ETTh1, ETTh2, ETTm2, etc.)
+            weights = [0.8, 0.2]
+            print(f"Using fixed ensemble for horizon {pred_len}: TS2Vec({weights[0]}), TS2Vec+Time({weights[1]})")
+        
         test_pred = ensemble_predictions(test_pred_orig, test_pred_enh, weights=weights, method='weighted')
-        print(f"Using 2-way ensemble for horizon {pred_len}: TS2Vec({weights[0]}), TS2Vec+Time({weights[1]})")
         lr_infer_time[pred_len] = time.time() - t
 
         ori_shape = test_data.shape[0], -1, pred_len, test_data.shape[2]
