@@ -174,7 +174,7 @@ def eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, 
         
         print(f"DEBUG: Detected dataset name: {dataset_name}")  # Debug info
         
-        if dataset_name and 'ETTm1' in dataset_name.upper():
+        if dataset_name and 'ETTm1' in dataset_name:
             # Adaptive weights for ETTm1 dataset
             if pred_len <= 48:
                 weights = [0.8, 0.2]
