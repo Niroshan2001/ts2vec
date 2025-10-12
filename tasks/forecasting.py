@@ -187,8 +187,6 @@ def eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, 
                 best_weights = w
         
         weights = best_weights
-        dataset_str = dataset_name if dataset_name else "Dataset"
-        print(f"{dataset_str} optimized ensemble H={pred_len}: TS2Vec({weights[0]}), TS2Vec+Time({weights[1]}) [score: {best_score:.4f}]")
         
         # Apply selected weights to test predictions
         test_pred = ensemble_predictions(test_pred_orig, test_pred_enh, weights=weights, method='weighted')
